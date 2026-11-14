@@ -674,6 +674,156 @@ labCopyButton.MouseButton1Click:Connect(function()
   add('HARPOON LAB',ok and 'Report copied' or 'Clipboard failure')
  else add('HARPOON LAB','Clipboard unavailable') end
 end)
+-- V14.4: TIMING LAB (passive observer). Added ONLY to the Tests page.
+-- Does not fire, change, equip or move the tool. Timing is observational, not proof of causality.
+testsScroll.CanvasSize=UDim2.fromOffset(0,1350)
+local timingLine=Instance.new('Frame')
+timingLine.Position=UDim2.fromOffset(7,802)
+timingLine.Size=UDim2.fromOffset(620,2)
+timingLine.BackgroundColor3=Color3.fromRGB(58,139,206)
+timingLine.BorderSizePixel=0
+timingLine.Parent=testsScroll
+makeLabel(testsScroll,'مختبر توقيت الجمع | TIMING LAB',7,816,620,32,19,Color3.fromRGB(92,207,252))
+makeLabel(testsScroll,'مراقبة فقط: أطلق الحربة يدويا على مورد واحد. لا يتم تفعيل السلاح تلقائيا.',7,856,620,48,13,Color3.fromRGB(252,210,146))
+local timingStart=makeBtn(testsScroll,'بدء تسجيل التوقيت',7,916,301,43,green)
+local timingStop=makeBtn(testsScroll,'إيقاف تسجيل التوقيت',321,916,306,43,red)
+local timingStatus=makeLabel(testsScroll,'الحالة: متوقف',7,967,620,35,13,Color3.fromRGB(141,232,171))
+local timingStats=makeLabel(testsScroll,'الإطلاقات: 0 | المقذوفات: 0 | اختفاء المرئيات: 0 | تغيرات الموارد: 0',7,1001,620,54,13)
+local timingCopy=makeBtn(testsScroll,'نسخ تقرير التوقيت الكامل',7,1068,620,42,blue)
+local timingOutput=Instance.new('TextBox')
+timingOutput.Position=UDim2.fromOffset(7,1120)
+timingOutput.Size=UDim2.fromOffset(620,204)
+timingOutput.BackgroundColor3=Color3.fromRGB(7,13,24)
+timingOutput.TextColor3=Color3.fromRGB(148,236,179)
+timingOutput.Font=Enum.Font.Code
+timingOutput.TextSize=12
+timingOutput.TextXAlignment=Enum.TextXAlignment.Left
+timingOutput.TextYAlignment=Enum.TextYAlignment.Top
+timingOutput.TextWrapped=true
+timingOutput.MultiLine=true
+timingOutput.TextEditable=false
+timingOutput.ClearTextOnFocus=false
+timingOutput.Text='لم يبدأ القياس'
+timingOutput.Parent=testsScroll
+Instance.new('UICorner',timingOutput).CornerRadius=UDim.new(0,8)
+local timingActive=false
+local timingStarted=0
+local timingEvents={}
+local timingCounts={fires=0,projectiles=0,removed=0,changes=0}
+local timingLastFire=nil
+local timingLastProjectile=nil
+local timingLastRemoval=nil
+local timingLastChange=nil
+local timingPending={}
+local timingObservedTool=nil
+local timingToolConnection=nil
+local timingStartInventory=nil
+local function timingValue(name) return tonumber(LP:GetAttribute(name)) or 0 end
+local function timingEvent(tag,msg)
+ if not timingActive then return end
+ local t=os.clock()-timingStarted
+ local entry=string.format('+%.3fs [%s] %s',t,tag,msg)
+ timingEvents[#timingEvents+1]=entry
+ if #timingEvents>1500 then table.remove(timingEvents,1) end
+ add('TIMING',entry)
+ timingOutput.Text=table.concat(timingEvents,'\n',math.max(1,#timingEvents-14),#timingEvents)
+ timingStats.Text=string.format('إطلاقات: %d | مقذوفات: %d | مرئيات اختفت: %d | تغيرات المخزون: %d',timingCounts.fires,timingCounts.projectiles,timingCounts.removed,timingCounts.changes)
+end
+local function timingBindTool()
+ if timingToolConnection then timingToolConnection:Disconnect();timingToolConnection=nil end
+ timingObservedTool=nil
+ local t=tool()
+ if t and t.Name:lower():find('harpoon',1,true) then
+  timingObservedTool=t
+  timingToolConnection=t.Activated:Connect(function()
+   if not timingActive then return end
+   timingCounts.fires=timingCounts.fires+1
+   timingLastFire=os.clock()
+   timingEvent('FIRE','Tool.Activated | #='..timingCounts.fires)
+  end)
+  timingEvent('TOOL','tracking '..t.Name)
+ else
+  timingEvent('TOOL','No equipped harpoon; equip it manually')
+ end
+end
+local function timingCheckpoint()
+ if not timingActive then return end
+ local t=tool()
+ if t~=timingObservedTool then timingBindTool() end
+end
+local function timingMarker(obj)
+ if not timingActive then return false end
+ local folder=workspace:FindFirstChild('LocalHarpoonVisuals')
+ if not folder or not obj:IsDescendantOf(folder) then return false end
+ local n=obj.Name
+ if n:sub(1,7)~='Visual_' then return false end
+ local ok,p=pcall(function()
+  if obj:IsA('BasePart') then return obj.Position end
+  if obj:IsA('Model') then return obj:GetPivot().Position end
+ end)
+ if not ok or not p or p.Y < -1000 then return false end
+ return true
+end
+hook(workspace.DescendantAdded,function(obj)
+ if not timingActive then return end
+ if obj.Name=='HarpoonProjectile' then
+  timingCounts.projectiles=timingCounts.projectiles+1
+  local now=os.clock()
+  timingLastProjectile=now
+  local dt=timingLastFire and string.format(' after last activation %.3fs',now-timingLastFire) or ' no observed activation'
+  timingEvent('PROJECTILE','visible projectile #'..timingCounts.projectiles..dt)
+ end
+end)
+hook(workspace.DescendantRemoving,function(obj)
+ if not timingMarker(obj) then return end
+ timingCounts.removed=timingCounts.removed+1
+ timingLastRemoval=os.clock()
+ local dt=timingLastProjectile and string.format(' after last projectile %.3fs',timingLastRemoval-timingLastProjectile) or ' no observed projectile'
+ timingEvent('VISUAL_REMOVED',obj.Name..dt..' (may be streaming/despawn, not proven harvest)')
+end)
+hook(LP.AttributeChanged,function(name)
+ if not timingActive or (name~='Mat_Wood' and name~='Mat_Metal' and name~='Mat_Scrap') then return end
+ timingCounts.changes=timingCounts.changes+1
+ timingLastChange=os.clock()
+ local dt=timingLastProjectile and string.format(' after last projectile %.3fs',timingLastChange-timingLastProjectile) or ' no observed projectile'
+ timingEvent('INVENTORY',name..'='..tostring(LP:GetAttribute(name))..dt)
+end)
+timingStart.MouseButton1Click:Connect(function()
+ if timingActive then return end
+ if auto then stopAuto() end
+ if auraOn then auraStop() end
+ if labRunning then labStopRequested=true;add('TIMING','Harpoon lab stopping; wait until it ends before manual measurement');return end
+ timingEvents={};timingCounts={fires=0,projectiles=0,removed=0,changes=0}
+ timingLastFire=nil;timingLastProjectile=nil;timingLastRemoval=nil;timingLastChange=nil
+ timingStartInventory={Wood=timingValue('Mat_Wood'),Metal=timingValue('Mat_Metal'),Scrap=timingValue('Mat_Scrap')}
+ timingStarted=os.clock();timingActive=true
+ timingStatus.Text='الحالة: جاري الرصد | اطلق الحربة يدويا'
+ timingStats.Text='إطلاقات: 0 | مقذوفات: 0 | مرئيات اختفت: 0 | تغيرات المخزون: 0'
+ timingEvent('START','Passive observation only; no automatic fire')
+ timingBindTool()
+end)
+timingStop.MouseButton1Click:Connect(function()
+ if not timingActive then return end
+ timingEvent('END',string.format('delta wood=%d metal=%d scrap=%d',timingValue('Mat_Wood')-timingStartInventory.Wood,timingValue('Mat_Metal')-timingStartInventory.Metal,timingValue('Mat_Scrap')-timingStartInventory.Scrap))
+ timingActive=false
+ if timingToolConnection then timingToolConnection:Disconnect();timingToolConnection=nil end
+ timingStatus.Text='الحالة: التسجيل متوقف'
+end)
+timingCopy.MouseButton1Click:Connect(function()
+ local header=string.format('RAFT TIMING LAB | player=%s | place=%s | active=%s | fires=%d projectiles=%d visualsRemoved=%d inventoryChanges=%d\nCAUTION: Time correlation does not prove which hit produced an inventory change.\n',LP.Name,tostring(game.PlaceId),tostring(timingActive),timingCounts.fires,timingCounts.projectiles,timingCounts.removed,timingCounts.changes)
+ local body=header..table.concat(timingEvents,'\n')
+ if type(setclipboard)=='function' then
+  local ok=pcall(setclipboard,body)
+  if ok then timingStatus.Text='تم نسخ تقرير التوقيت' else timingStatus.Text='تعذر نسخ التقرير' end
+ else timingStatus.Text='النسخ غير متاح' end
+end)
+task.spawn(function()
+ while alive do
+  if timingActive then timingCheckpoint() end
+  task.wait(0.3)
+ end
+ if timingToolConnection then timingToolConnection:Disconnect() end
+end)
 local function report()
  return table.concat({'RAFT CONTROL V14 FULL REPORT','PlaceId: '..game.PlaceId,'Player: '..LP.Name,'Entries retained: '..#logs,'Total events: '..total,'Projectiles: '..projectiles,'Changes: '..changes,'Candidates: '..scanCount..' | Auto active: '..tostring(auto)..' | Auto target: '..(autoTarget and autoTarget.Name or 'none'),'Filter='..resourceMode..'; range='..range..'; speed='..speed..'; instant jump='..tostring(jumpMode)..'; touch test='..tostring(touchMode)..'; touch attempts='..touchTries,'Materials: Wood='..tostring(LP:GetAttribute('Mat_Wood'))..' Metal='..tostring(LP:GetAttribute('Mat_Metal'))..' Scrap='..tostring(LP:GetAttribute('Mat_Scrap'))..' Gold='..tostring(LP:GetAttribute('Cash')),'Note: server controls actual materials; chest inspection does not confirm transfers.','===== ALL RESULTS IN TIME ORDER =====',table.concat(logs,'\n')},'\n')
 end
@@ -991,5 +1141,5 @@ cleanup=function()
  oldCleanup()
 end
 env.RaftControlV14Stop=cleanup
-add('SYSTEM','V14.2 loaded; test-only aura page added. Existing auto collector untouched.');refresh()
+add('SYSTEM','V14.4 loaded; passive timing lab added to Tests. Existing collector unchanged.');refresh()
 
