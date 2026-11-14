@@ -1,4 +1,4 @@
--- RAFT CONTROL V13 | filtered fast collection + chest discovery
+-- RAFT CONTROL V14.1 | resource search fix: wide coverage + spiral exploration
 local Players=game:GetService('Players')
 local RS=game:GetService('ReplicatedStorage')
 local UIS=game:GetService('UserInputService')
@@ -40,7 +40,7 @@ local function pos(o)
  return ' | xyz='..tostring(p.Position)..' | dist='..d
 end
 local auto=false;local autoSerial=0;local speed=2000;local fire=true;local autoTarget=nil
-local range=2500
+local range=100000 -- search all currently streamed / replicated world resources
 local resourceMode='ALL'
 local modes={'ALL','WOOD','METAL','SCRAP','CHESTS','OTHER'}
 local modeIndex=1
@@ -129,7 +129,7 @@ local function scanCandidates()
    end
   end
  end
- local ok,parts=pcall(function()return workspace:GetPartBoundsInRadius(r.Position,math.min(range,650))end)
+ local ok,parts=pcall(function()return workspace:GetPartBoundsInRadius(r.Position,math.min(range,1000))end)
  if ok then
   for _,part in ipairs(parts) do
    local obj=candidate(part)
@@ -170,10 +170,10 @@ local function autoStart()
  local id=autoSerial
  local startRoot=root();local center=startRoot and startRoot.Position
  if not center then auto=false;add('AUTO','No character root');return end
- local waypoint=0;local roamPosition=nil;local lastFire=0;local focus=nil;local focusSince=0;local lastArrive=0
+ local waypoint=0;local roamPosition=nil;local roamSince=0;local lastFire=0;local focus=nil;local focusSince=0;local lastArrive=0
  local lastActivationLog=0;local lastMotion=os.clock();local lastSearch=0
  equipHarpoon();scanCandidates()
- add('AUTO','Started | filter='..resourceMode..' | range='..range..' | speed='..speed..' | candidates='..scanCount)
+ add('AUTO','Started | filter='..resourceMode..' | range='..range..' | speed='..speed..' | candidates='..scanCount..' | spiral exploration enabled')
  task.spawn(function()
   while alive and auto and autoSerial==id do
    local ok,err=pcall(function()
@@ -186,21 +186,29 @@ local function autoStart()
       focus=target;focusSince=os.clock()
       add('AUTO TARGET','Active visual '..path(target)..' | dist='..math.floor(d))
      end
-     if os.clock()-focusSince>0.85 then
-      visited[target]=os.clock()+1.1;target=nil;autoTarget=nil;focus=nil
-      add('AUTO','Target timeout: skip for 1.1s')
+     if os.clock()-focusSince>2.5 then
+      visited[target]=os.clock()+3;target=nil;autoTarget=nil;focus=nil
+      add('AUTO','Target timeout: skip for 3s')
      end
     end
-    -- Without a target, remain at a waypoint until reached. Previous V8 changed
-    -- the waypoint every 0.14s, making the avatar bounce unpredictably.
+    -- Spiral exploration rather than repeatedly circling only 145 studs from the raft.
+    -- Wide scans see replicated models; streaming can hide distant world objects.
+    -- Visit distant waypoints to reveal those objects. Pause briefly at each waypoint.
     if not target then
-     if not roamPosition or (r.Position-roamPosition).Magnitude<13 then
+     if not roamPosition or ((r.Position-roamPosition).Magnitude<13 and os.clock()-roamSince>0.50)
+         or os.clock()-roamSince>3 then
       waypoint=waypoint+1
-      local a=(waypoint%20)*math.pi/10
-      roamPosition=center+Vector3.new(math.cos(a)*145,8,math.sin(a)*145)
+      local ring=math.floor((waypoint-1)/12)
+      local spoke=(waypoint-1)%12
+      local radius=math.min(5000,220+ring*350)
+      local angle=(spoke/12)*math.pi*2+(ring%2)*math.pi/12
+      roamPosition=center+Vector3.new(math.cos(angle)*radius,8,math.sin(angle)*radius)
+      roamSince=os.clock()
+      if waypoint>=12*15 then waypoint=0 end
      end
      p=roamPosition
     else
+     roamPosition=nil
      p=p+Vector3.new(0,4,0)
     end
     if p then
@@ -210,7 +218,7 @@ local function autoStart()
       local dt=math.clamp(now-lastMotion,.015,.075)
       lastMotion=now
       local advance=math.min(delta.Magnitude,speed*dt)
-      if target and jumpMode then advance=delta.Magnitude end
+      if jumpMode then advance=delta.Magnitude end
       local new=r.Position+delta.Unit*advance
       pcall(function()r.CFrame=CFrame.new(new,new+r.CFrame.LookVector);r.AssemblyLinearVelocity=Vector3.zero end)
      end
@@ -383,11 +391,11 @@ makeLabel(rPage,'جمع الموارد والفلاتر',9,3,620,31,21)
 local autoBtn=makeBtn(rPage,'▶ جمع تلقائي',7,48,303,42,green)
 local autoStopBtn=makeBtn(rPage,'■ إيقاف جمع الموارد',322,48,303,42,red)
 local filterBtn=makeBtn(rPage,'فلتر: جميع الموارد',7,100,303,42,blue)
-local rangeBtn=makeBtn(rPage,'نطاق: 2500',322,100,303,42,blue)
+local rangeBtn=makeBtn(rPage,'نطاق: كامل المتاح',322,100,303,42,blue)
 local jumpBtn=makeBtn(rPage,'انتقال سريع: مفعل',7,152,303,42,purple)
 local speedBtn=makeBtn(rPage,'السرعة: 2000',322,152,303,42,purple)
 local touchBtn=makeBtn(rPage,'اختبار اللمس: مفعل',7,204,303,42,blue)
-makeLabel(rPage,'فلتر الحديد = صفائح معدنية؛ فلتر الخردة = براميل معدنية (تصنيف تجريبي).',8,264,616,44,13,Color3.fromRGB(235,195,133))
+makeLabel(rPage,'الحديد = صفائح معدنية؛ الخردة = براميل (تجريبي). البحث الكامل للعناصر المحملة فقط.',8,264,616,44,13,Color3.fromRGB(235,195,133))
 local movePage=pages['التنقل']
 makeLabel(movePage,'التنقل والمواقع المحفوظة',9,3,615,31,21)
 local savedPosition=nil
@@ -542,8 +550,8 @@ filterBtn.MouseButton1Click:Connect(function()
  refresh()
 end)
 rangeBtn.MouseButton1Click:Connect(function()
- range=(range==2500 and 3500 or range==3500 and 800 or 2500)
- rangeBtn.Text='نطاق: '..range
+ range=(range==100000 and 3500 or range==3500 and 800 or 100000)
+ rangeBtn.Text=(range==100000 and 'نطاق: كامل المتاح' or 'نطاق: '..range)
  add('SCAN','Range updated '..range);refresh()
 end)
 chestBtn.MouseButton1Click:Connect(chestScan)
