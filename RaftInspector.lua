@@ -674,6 +674,7 @@ labCopyButton.MouseButton1Click:Connect(function()
   add('HARPOON LAB',ok and 'Report copied' or 'Clipboard failure')
  else add('HARPOON LAB','Clipboard unavailable') end
 end)
+local function initTimingLab()
 -- V14.4: TIMING LAB (passive observer). Added ONLY to the Tests page.
 -- Does not fire, change, equip or move the tool. Timing is observational, not proof of causality.
 testsScroll.CanvasSize=UDim2.fromOffset(0,1350)
@@ -824,6 +825,8 @@ task.spawn(function()
  end
  if timingToolConnection then timingToolConnection:Disconnect() end
 end)
+end
+initTimingLab()
 local function report()
  return table.concat({'RAFT CONTROL V14 FULL REPORT','PlaceId: '..game.PlaceId,'Player: '..LP.Name,'Entries retained: '..#logs,'Total events: '..total,'Projectiles: '..projectiles,'Changes: '..changes,'Candidates: '..scanCount..' | Auto active: '..tostring(auto)..' | Auto target: '..(autoTarget and autoTarget.Name or 'none'),'Filter='..resourceMode..'; range='..range..'; speed='..speed..'; instant jump='..tostring(jumpMode)..'; touch test='..tostring(touchMode)..'; touch attempts='..touchTries,'Materials: Wood='..tostring(LP:GetAttribute('Mat_Wood'))..' Metal='..tostring(LP:GetAttribute('Mat_Metal'))..' Scrap='..tostring(LP:GetAttribute('Mat_Scrap'))..' Gold='..tostring(LP:GetAttribute('Cash')),'Note: server controls actual materials; chest inspection does not confirm transfers.','===== ALL RESULTS IN TIME ORDER =====',table.concat(logs,'\n')},'\n')
 end
@@ -1141,5 +1144,5 @@ cleanup=function()
  oldCleanup()
 end
 env.RaftControlV14Stop=cleanup
-add('SYSTEM','V14.4 loaded; passive timing lab added to Tests. Existing collector unchanged.');refresh()
+add('SYSTEM','V14.4.1 loaded; timing lab scoped to avoid Lua 200-local-variable compile limit.');refresh()
 
