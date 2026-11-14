@@ -1,14 +1,14 @@
--- RAFT INSPECTOR V8 | continuous client-visible diagnostics
+-- RAFT INSPECTOR V9 | continuous client-visible diagnostics
 local Players=game:GetService('Players')
 local RS=game:GetService('ReplicatedStorage')
 local UIS=game:GetService('UserInputService')
 local LP=Players.LocalPlayer
 local PG=LP:WaitForChild('PlayerGui')
 local env=(getgenv and getgenv()) or _G
-if type(env.RaftInspectorV8Stop)=='function' then pcall(env.RaftInspectorV8Stop) end
-local old=PG:FindFirstChild('RaftInspectorV8'); if old then old:Destroy() end
+for _,k in ipairs({'RaftInspectorV9Stop','RaftInspectorV8Stop','RaftInspectorV7Stop'}) do if type(env[k])=='function' then pcall(env[k]) end end
+for _,name in ipairs({'RaftInspectorV9','RaftInspectorV8','RaftInspectorV7'}) do local old=PG:FindFirstChild(name); if old then old:Destroy() end end
 local alive=true; local running=false; local links={}; local logs={}; local seen={}; local total=0; local changes=0; local projectiles=0; local lastSnapshot=0
-local MAX=2200
+local MAX=4500
 local function path(x) local ok,s=pcall(function()return x:GetFullName()end);return ok and s or tostring(x) end
 local function stamp() return string.format('%.1f',os.clock()) end
 local function add(tag,msg)
@@ -56,16 +56,29 @@ local function equipHarpoon()
  end
  return nil
 end
-local words={'wood','metal','scrap','resource','loot','plank','crate','barrel','supply'}
+-- V9: Actual resource visuals were observed under LocalHarpoonVisuals.
+-- Ignore the pooled copies parked at Y ~= -10000; use active models only.
+local words={'wood','metal','scrap','resource','loot','plank','crate','barrel','supply','chest','chair','sheet'}
 local function contains(s, terms)
- s=s:lower()
+ s=string.lower(tostring(s))
  for _,w in ipairs(terms) do if s:find(w,1,true) then return true end end
  return false
 end
 local function candidate(part)
  if not part:IsA('BasePart') or isPlayerObject(part) or isRaft(part) then return nil end
  local visuals=workspace:FindFirstChild('LocalHarpoonVisuals')
- if visuals and part:IsDescendantOf(visuals) then return nil end
+ if visuals and part:IsDescendantOf(visuals) then
+  local group=part
+  while group and group.Parent~=visuals do
+   group=group.Parent
+  end
+  if group and group~=visuals and group:IsA('Model')
+   and group.Name:sub(1,7)=='Visual_' and part.Position.Y>-500 then
+   return group
+  end
+  return nil
+ end
+ -- Fallback for other visible world resources.
  local n=part
  while n and n~=workspace do
   if contains(n.Name,{'revolver','blunderbuss','harpoonprojectile','sword','gun','hammer'}) then return nil end
@@ -76,18 +89,38 @@ local function candidate(part)
 end
 local function scanCandidates()
  local r=root();if not r then return end
- local ok,parts=pcall(function() return workspace:GetPartBoundsInRadius(r.Position,350) end)
- if not ok then add('SCAN','query failed');return end
  local now=os.clock();local n=0
- for _,part in ipairs(parts) do
-  local obj=candidate(part)
-  if obj and not candidates[obj] then
-   candidates[obj]={at=now,part=part}
-   add('CANDIDATE','Found '..path(obj)..' | xyz='..tostring(part.Position))
-  elseif obj then candidates[obj].at=now;candidates[obj].part=part end
+ -- Scan active visual models directly, because these can be non-collidable and
+ -- GetPartBoundsInRadius may skip them or classify pooled children incorrectly.
+ local visuals=workspace:FindFirstChild('LocalHarpoonVisuals')
+ if visuals then
+  for _,obj in ipairs(visuals:GetChildren()) do
+   if obj:IsA('Model') and obj.Name:sub(1,7)=='Visual_' then
+    local part=obj.PrimaryPart or obj:FindFirstChildWhichIsA('BasePart',true)
+    if part and part.Position.Y>-500 then
+     local d=(part.Position-r.Position).Magnitude
+     if d<=550 then
+      if not candidates[obj] then
+       candidates[obj]={at=now,part=part,kind='ACTIVE VISUAL'}
+       add('CANDIDATE','ACTIVE '..path(obj)..' | xyz='..tostring(part.Position)..' | dist='..math.floor(d))
+      else candidates[obj].at=now;candidates[obj].part=part end
+     end
+    end
+   end
+  end
  end
+ local ok,parts=pcall(function()return workspace:GetPartBoundsInRadius(r.Position,400)end)
+ if ok then
+  for _,part in ipairs(parts) do
+   local obj=candidate(part)
+   if obj and obj.Parent and not candidates[obj] then
+    candidates[obj]={at=now,part=part,kind='NEARBY'}
+    add('CANDIDATE','Found '..path(obj)..' | xyz='..tostring(part.Position))
+   elseif obj and candidates[obj] then candidates[obj].at=now;candidates[obj].part=part end
+  end
+ else add('SCAN','Spatial query failed') end
  for obj,item in pairs(candidates) do
-  if not obj.Parent or now-item.at>10 then candidates[obj]=nil else n=n+1 end
+  if not obj.Parent or not item.part.Parent or now-item.at>8 then candidates[obj]=nil else n=n+1 end
  end
  scanCount=n
 end
@@ -97,7 +130,9 @@ local function nearestCandidate()
  for obj,item in pairs(candidates) do
   if obj.Parent and item.part and item.part.Parent and (visited[obj] or 0)<os.clock() then
    local p=item.part.Position;local d=(p-r.Position).Magnitude
-   if d<350 and (not bestDistance or d<bestDistance) then best=obj;bestDistance=d;bestPos=p end
+   if p.Y>-500 and d<550 and (not bestDistance or d<bestDistance) then
+    best=obj;bestDistance=d;bestPos=p
+   end
   end
  end
  return best,bestDistance,bestPos
@@ -115,8 +150,10 @@ local function autoStart()
  local id=autoSerial
  local startRoot=root();local center=startRoot and startRoot.Position
  if not center then auto=false;add('AUTO','No character root');return end
- local waypoint=0;local lastFire=0;local focus=nil;local focusSince=0
- equipHarpoon();add('AUTO','Experimental traverse started | speed='..speed)
+ local waypoint=0;local roamPosition=nil;local lastFire=0;local focus=nil;local focusSince=0
+ local lastActivationLog=0
+ equipHarpoon();scanCandidates()
+ add('AUTO','Started active-visual search | speed='..speed..' | candidates='..scanCount)
  task.spawn(function()
   while alive and auto and autoSerial==id do
    local ok,err=pcall(function()
@@ -125,32 +162,52 @@ local function autoStart()
     scanCandidates()
     local target,d,p=nearestCandidate();autoTarget=target
     if target then
-     if target~=focus then focus=target;focusSince=os.clock();add('AUTO','Target '..path(target))end
-     if os.clock()-focusSince>6 then
-      visited[target]=os.clock()+15;target=nil;autoTarget=nil;focus=nil
+     if target~=focus then
+      focus=target;focusSince=os.clock()
+      add('AUTO TARGET','Active visual '..path(target)..' | dist='..math.floor(d))
+     end
+     if os.clock()-focusSince>5 then
+      visited[target]=os.clock()+14;target=nil;autoTarget=nil;focus=nil
+      add('AUTO','Target timeout: skip for 14s')
      end
     end
+    -- Without a target, remain at a waypoint until reached. Previous V8 changed
+    -- the waypoint every 0.14s, making the avatar bounce unpredictably.
     if not target then
-     waypoint=waypoint+1
-     local a=(waypoint%24)*math.pi/12
-     p=center+Vector3.new(math.cos(a)*105,5,math.sin(a)*105)
+     if not roamPosition or (r.Position-roamPosition).Magnitude<13 then
+      waypoint=waypoint+1
+      local a=(waypoint%20)*math.pi/10
+      roamPosition=center+Vector3.new(math.cos(a)*100,8,math.sin(a)*100)
+     end
+     p=roamPosition
+    else
+     p=p+Vector3.new(0,5,0)
     end
     if p then
      local delta=p-r.Position
-     if delta.Magnitude>5 then
+     if delta.Magnitude>7 then
       local advance=math.min(delta.Magnitude,speed*0.14)
-      -- Experimental client movement; server may correct position.
       local new=r.Position+delta.Unit*advance
       pcall(function()r.CFrame=CFrame.new(new,new+r.CFrame.LookVector)end)
      end
     end
-    if target and fire and os.clock()-lastFire>0.2 then
+    -- Tool:Activate() is only a request. A server-controlled harpoon may require
+    -- genuine input/camera ray and enforce a cooldown; this cannot guarantee firing.
+    if target and fire and d and d<65 and os.clock()-lastFire>0.45 then
      local t=equipHarpoon()
      if t then
-      pcall(function()t:Activate()end)
+      local cam=workspace.CurrentCamera
+      if cam then
+       pcall(function()cam.CFrame=CFrame.lookAt(cam.CFrame.Position,p-Vector3.new(0,5,0))end)
+      end
+      local success,msg=pcall(function()t:Activate()end)
       lastFire=os.clock()
-      add('AUTO','Harpoon activate toward '..target.Name..' (collection unverified)')
-     end
+      if os.clock()-lastActivationLog>1.2 then
+       add('AUTO FIRE','tool='..t.Name..' activateAPI='..tostring(success)..' target='..target.Name..' dist='..math.floor(d)..' | projectile is separate proof')
+       lastActivationLog=os.clock()
+      end
+      if not success then add('AUTO ERROR','activate: '..tostring(msg))end
+     else add('AUTO','Harpoon missing')end
     end
    end)
    if not ok then add('AUTO ERROR',tostring(err))end
@@ -219,7 +276,7 @@ local function visualsSnapshot()
   add('VISUAL','visual objects='..n)
  end
 end
-local gui=Instance.new('ScreenGui');gui.Name='RaftInspectorV8';gui.ResetOnSpawn=false;gui.DisplayOrder=999;gui.Parent=PG
+local gui=Instance.new('ScreenGui');gui.Name='RaftInspectorV9';gui.ResetOnSpawn=false;gui.DisplayOrder=999;gui.Parent=PG
 local frame=Instance.new('Frame');frame.Size=UDim2.fromOffset(410,625);frame.Position=UDim2.new(.5,-205,.5,-312);frame.BackgroundColor3=Color3.fromRGB(17,22,34);frame.Active=true;frame.Draggable=true;frame.Parent=gui
 Instance.new('UICorner',frame).CornerRadius=UDim.new(0,12)
 local function label(txt,y,h)
@@ -228,7 +285,7 @@ end
 local function btn(txt,x,y,w,h,col)
  local b=Instance.new('TextButton');b.Position=UDim2.fromOffset(x,y);b.Size=UDim2.fromOffset(w,h);b.BackgroundColor3=col;b.TextColor3=Color3.new(1,1,1);b.Font=Enum.Font.GothamBold;b.TextSize=12;b.Text=txt;b.Parent=frame;Instance.new('UICorner',b).CornerRadius=UDim.new(0,7);return b
 end
-label('RAFT INSPECTOR V8  |  LIVE REPORT',9,25)
+label('RAFT INSPECTOR V9  |  LIVE REPORT',9,25)
 local status=label('READY | Logs: 0',35,20)
 label('1  |  CONTINUOUS SCAN',62,18)
 local start=btn('START ALL',12,83,187,35,Color3.fromRGB(28,137,91))
@@ -240,14 +297,14 @@ local server=btn('VISIBLE REMOTES',279,146,119,34,Color3.fromRGB(61,95,155))
 label('3  |  FULL REPORT / COPY',188,18)
 local copy=btn('COPY EVERYTHING',12,209,187,36,Color3.fromRGB(113,73,195))
 local reset=btn('CLEAR REPORT',211,209,187,36,Color3.fromRGB(90,94,110))
-label('4  |  EXPERIMENTAL AUTO (SERVER MAY BLOCK)',252,18)
-local autoBtn=btn('AUTO TRAVERSE + FIRE',12,275,187,35,Color3.fromRGB(112,75,192))
+label('4  |  AUTO TARGETS (ACTIVE VISUALS)',252,18)
+local autoBtn=btn('AUTO FIND + FIRE',12,275,187,35,Color3.fromRGB(112,75,192))
 local autoStopBtn=btn('STOP AUTO',211,275,115,35,Color3.fromRGB(173,60,67))
 local speedBtn=btn('70',335,275,63,35,Color3.fromRGB(69,99,157))
 local output=Instance.new('TextBox');output.Position=UDim2.fromOffset(12,322);output.Size=UDim2.fromOffset(386,255);output.BackgroundColor3=Color3.fromRGB(7,12,20);output.TextColor3=Color3.fromRGB(132,240,170);output.Font=Enum.Font.Code;output.TextSize=11;output.TextXAlignment=Enum.TextXAlignment.Left;output.TextYAlignment=Enum.TextYAlignment.Top;output.TextWrapped=true;output.MultiLine=true;output.TextEditable=false;output.ClearTextOnFocus=false;output.Text='Press START ALL';output.Parent=frame;Instance.new('UICorner',output).CornerRadius=UDim.new(0,7)
 local close=btn('CLOSE',12,586,386,29,Color3.fromRGB(74,77,95))
 local function report()
- return table.concat({'RAFT INSPECTOR V8 FULL REPORT','PlaceId: '..game.PlaceId,'Player: '..LP.Name,'Entries retained: '..#logs,'Total events: '..total,'Projectiles: '..projectiles,'Changes: '..changes,'Candidates: '..scanCount..' | Auto active: '..tostring(auto)..' | Auto target: '..(autoTarget and autoTarget.Name or 'none'),'Note: client-visible data only; not server-only storage; collection unverified','===== ALL RESULTS IN TIME ORDER =====',table.concat(logs,'\n')},'\n')
+ return table.concat({'RAFT INSPECTOR V9 FULL REPORT','PlaceId: '..game.PlaceId,'Player: '..LP.Name,'Entries retained: '..#logs,'Total events: '..total,'Projectiles: '..projectiles,'Changes: '..changes,'Candidates: '..scanCount..' | Auto active: '..tostring(auto)..' | Auto target: '..(autoTarget and autoTarget.Name or 'none'),'Note: client-visible data only; not server-only storage; collection unverified','===== ALL RESULTS IN TIME ORDER =====',table.concat(logs,'\n')},'\n')
 end
 local function refresh()
  if not alive then return end
@@ -264,6 +321,13 @@ end
 local function watchPlayerValues()
  for _,o in ipairs(LP:GetDescendants()) do if o:IsA('ValueBase') then watchValue(o) end end
 end
+hook(LP.AttributeChanged,function(name)
+ if running and (name:sub(1,4)=='Mat_' or name=='Cash') then
+  changes=changes+1
+  add('MATERIAL CHANGE',name..' => '..tostring(LP:GetAttribute(name)))
+  refresh()
+ end
+end)
 hook(LP.DescendantAdded,function(o)
  if not running then return end
  if o:IsA('ValueBase') then add('NEW VALUE',path(o)..'='..valueString(o));watchValue(o)
@@ -334,6 +398,6 @@ local function cleanup()
  for _,c in ipairs(links) do pcall(function()c:Disconnect()end) end
  if gui.Parent then gui:Destroy()end
 end
-env.RaftInspectorV8Stop=cleanup
+env.RaftInspectorV9Stop=cleanup
 close.MouseButton1Click:Connect(cleanup)
 add('SYSTEM','V7 loaded. START ALL to continuously log client-visible info.');refresh()
