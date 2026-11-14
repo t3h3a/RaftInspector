@@ -5,8 +5,8 @@ local UIS=game:GetService('UserInputService')
 local LP=Players.LocalPlayer
 local PG=LP:WaitForChild('PlayerGui')
 local env=(getgenv and getgenv()) or _G
-for _,k in ipairs({'RaftControlV13Stop','RaftInspectorV12Stop','RaftInspectorV11Stop','RaftInspectorV10Stop','RaftInspectorV9Stop','RaftInspectorV8Stop','RaftInspectorV7Stop'}) do if type(env[k])=='function' then pcall(env[k]) end end
-for _,name in ipairs({'RaftControlV13','RaftControlV12','RaftInspectorV11','RaftInspectorV10','RaftInspectorV9','RaftInspectorV8','RaftInspectorV7'}) do local old=PG:FindFirstChild(name); if old then old:Destroy() end end
+for _,k in ipairs({'RaftControlV14Stop','RaftControlV13Stop','RaftInspectorV12Stop','RaftInspectorV11Stop','RaftInspectorV10Stop','RaftInspectorV9Stop','RaftInspectorV8Stop','RaftInspectorV7Stop'}) do if type(env[k])=='function' then pcall(env[k]) end end
+for _,name in ipairs({'RaftControlV14','RaftControlV13','RaftControlV12','RaftInspectorV11','RaftInspectorV10','RaftInspectorV9','RaftInspectorV8','RaftInspectorV7'}) do local old=PG:FindFirstChild(name); if old then old:Destroy() end end
 local alive=true; local running=false; local links={}; local logs={}; local seen={}; local total=0; local changes=0; local projectiles=0; local lastSnapshot=0
 local MAX=4500
 local function path(x) local ok,s=pcall(function()return x:GetFullName()end);return ok and s or tostring(x) end
@@ -324,74 +324,116 @@ local function visualsSnapshot()
   add('VISUAL','visual objects='..n)
  end
 end
-local gui=Instance.new('ScreenGui');gui.Name='RaftControlV13';gui.ResetOnSpawn=false;gui.DisplayOrder=999;gui.Parent=PG
-local frame=Instance.new('Frame');frame.Size=UDim2.fromOffset(410,710);frame.Position=UDim2.new(.5,-205,.5,-355);frame.BackgroundColor3=Color3.fromRGB(17,22,34);frame.Active=true;frame.Draggable=true;frame.Parent=gui
-Instance.new('UICorner',frame).CornerRadius=UDim.new(0,12)
+-- V14: wide Arabic dashboard, page-oriented controls.
+local gui=Instance.new('ScreenGui');gui.Name='RaftControlV14';gui.ResetOnSpawn=false;gui.DisplayOrder=999;gui.Parent=PG
+local frame=Instance.new('Frame');frame.Size=UDim2.fromOffset(860,520);frame.Position=UDim2.new(.5,-430,.5,-260);frame.BackgroundColor3=Color3.fromRGB(13,20,36);frame.Active=true;frame.Draggable=true;frame.Parent=gui
+Instance.new('UICorner',frame).CornerRadius=UDim.new(0,17)
+local edge=Instance.new('UIStroke');edge.Color=Color3.fromRGB(48,128,206);edge.Thickness=1.5;edge.Parent=frame
 local guiScale=Instance.new('UIScale');guiScale.Parent=frame
 local function fitScreen()
  local camera=workspace.CurrentCamera
- if camera then
-  guiScale.Scale=math.min(1,camera.ViewportSize.X/435,camera.ViewportSize.Y/740)
- end
+ if camera then guiScale.Scale=math.min(1,camera.ViewportSize.X/880,camera.ViewportSize.Y/540) end
 end
 fitScreen()
-local function label(txt,y,h)
- local l=Instance.new('TextLabel');l.Position=UDim2.fromOffset(12,y);l.Size=UDim2.fromOffset(386,h);l.BackgroundTransparency=1;l.Text=txt;l.TextColor3=Color3.fromRGB(220,235,250);l.Font=Enum.Font.GothamBold;l.TextSize=14;l.TextXAlignment=Enum.TextXAlignment.Left;l.Parent=frame;return l
+local sidebar=Instance.new('Frame');sidebar.Size=UDim2.fromOffset(183,520);sidebar.Position=UDim2.fromOffset(677,0);sidebar.BackgroundColor3=Color3.fromRGB(21,32,53);sidebar.Parent=frame
+Instance.new('UICorner',sidebar).CornerRadius=UDim.new(0,16)
+local function makeLabel(parent,txt,x,y,w,h,size,col)
+ local l=Instance.new('TextLabel');l.Position=UDim2.fromOffset(x,y);l.Size=UDim2.fromOffset(w,h);l.BackgroundTransparency=1;l.Text=txt;l.TextColor3=col or Color3.fromRGB(227,236,253);l.Font=Enum.Font.GothamBold;l.TextSize=size or 14;l.TextXAlignment=Enum.TextXAlignment.Left;l.TextWrapped=true;l.Parent=parent;return l
 end
-local function btn(txt,x,y,w,h,col)
- local b=Instance.new('TextButton');b.Position=UDim2.fromOffset(x,y);b.Size=UDim2.fromOffset(w,h);b.BackgroundColor3=col;b.TextColor3=Color3.new(1,1,1);b.Font=Enum.Font.GothamBold;b.TextSize=12;b.Text=txt;b.Parent=frame;Instance.new('UICorner',b).CornerRadius=UDim.new(0,7);return b
+local function makeBtn(parent,txt,x,y,w,h,col)
+ local v=Instance.new('TextButton');v.Position=UDim2.fromOffset(x,y);v.Size=UDim2.fromOffset(w,h);v.BackgroundColor3=col or Color3.fromRGB(42,91,154);v.TextColor3=Color3.new(1,1,1);v.Font=Enum.Font.GothamBold;v.TextSize=13;v.Text=txt;v.TextWrapped=true;v.Parent=parent;Instance.new('UICorner',v).CornerRadius=UDim.new(0,9);return v
 end
-label('RAFT CONTROL V13  |  RESOURCE FILTERS',9,25)
-local status=label('READY | Logs: 0',35,20)
-label('1  |  CONTINUOUS SCAN',62,18)
-local start=btn('START ALL',12,83,187,35,Color3.fromRGB(28,137,91))
-local stop=btn('STOP',211,83,187,35,Color3.fromRGB(175,62,66))
-label('2  |  TEST & SNAPSHOTS',125,18)
-local test=btn('TEST SCRIPT',12,146,123,34,Color3.fromRGB(52,107,170))
-local inventory=btn('MY ITEMS / STATS',143,146,128,34,Color3.fromRGB(61,95,155))
-local server=btn('VISIBLE REMOTES',279,146,119,34,Color3.fromRGB(61,95,155))
-label('3  |  FULL REPORT / COPY',188,18)
-local copy=btn('COPY EVERYTHING',12,209,187,36,Color3.fromRGB(113,73,195))
-local reset=btn('CLEAR REPORT',211,209,187,36,Color3.fromRGB(90,94,110))
-label('4  |  AUTO RESOURCES / FAST TRAVEL',252,18)
-local autoBtn=btn('AUTO FIND + FIRE',12,275,187,35,Color3.fromRGB(112,75,192))
-local autoStopBtn=btn('STOP AUTO',211,275,115,35,Color3.fromRGB(173,60,67))
-local speedBtn=btn('2000',335,275,63,35,Color3.fromRGB(69,99,157))
-local jumpBtn=btn('FLASH: ON',12,315,187,32,Color3.fromRGB(50,107,148))
-local touchBtn=btn('TOUCH TEST: ON',211,315,187,32,Color3.fromRGB(50,107,148))
-local filterBtn=btn('FILTER: ALL',12,353,187,35,Color3.fromRGB(28,120,151))
-local rangeBtn=btn('RANGE: 2500',211,353,187,35,Color3.fromRGB(59,103,170))
-local chestBtn=btn('SCAN ALL RAFT CHESTS',12,395,187,35,Color3.fromRGB(70,109,160))
-local warpChestBtn=btn('WARP NEXT CHEST (TEST)',211,395,187,35,Color3.fromRGB(103,73,153))
-local accountLabel=label('ACCOUNT: '..LP.Name,438,24)
-local matsLabel=label('WOOD - | METAL - | SCRAP - | GOLD -',464,23)
-local gainsLabel=label('GAIN: W +0 | M +0 | S +0',488,22)
-
-local output=Instance.new('TextBox');output.Position=UDim2.fromOffset(12,517);output.Size=UDim2.fromOffset(386,140);output.BackgroundColor3=Color3.fromRGB(7,12,20);output.TextColor3=Color3.fromRGB(132,240,170);output.Font=Enum.Font.Code;output.TextSize=11;output.TextXAlignment=Enum.TextXAlignment.Left;output.TextYAlignment=Enum.TextYAlignment.Top;output.TextWrapped=true;output.MultiLine=true;output.TextEditable=false;output.ClearTextOnFocus=false;output.Text='Press START ALL';output.Parent=frame;Instance.new('UICorner',output).CornerRadius=UDim.new(0,7)
-local close=btn('CLOSE',12,669,386,29,Color3.fromRGB(74,77,95))
-local hide=btn('HIDE -',326,9,72,25,Color3.fromRGB(48,116,159))
-local float=Instance.new('TextButton')
-float.Name='OpenInspector';float.Size=UDim2.fromOffset(100,35)
-float.Position=UDim2.new(1,-112,0,105)
-float.BackgroundColor3=Color3.fromRGB(50,90,170)
-float.Text='OPEN V13';float.TextColor3=Color3.new(1,1,1)
-float.TextSize=12;float.Font=Enum.Font.GothamBold
-float.Visible=false;float.Active=true;float.Draggable=true;float.Parent=gui
-Instance.new('UICorner',float).CornerRadius=UDim.new(0,8)
-hide.MouseButton1Click:Connect(function()
- frame.Visible=false;float.Visible=true
-end)
-float.MouseButton1Click:Connect(function()
- float.Visible=false;frame.Visible=true
-end)
+makeLabel(sidebar,'⚓ التحكم بالسفن',16,13,166,34,19,Color3.fromRGB(92,207,252))
+local pages={};local tabButtons={};local currentPage='الرئيسية'
+local function page(name)
+ local p=Instance.new('Frame');p.Name=name;p.Size=UDim2.fromOffset(646,382);p.Position=UDim2.fromOffset(16,127);p.BackgroundTransparency=1;p.Visible=false;p.Parent=frame;pages[name]=p;return p
+end
+local names={'الرئيسية','جمع الموارد','التنقل','اللاعبون','الصناديق','الفحص والتقارير','الإعدادات'}
+for i,name in ipairs(names) do
+ local tab=makeBtn(sidebar,name,10,53+(i-1)*52,162,43,Color3.fromRGB(35,57,89));tabButtons[name]=tab
+ page(name)
+ tab.MouseButton1Click:Connect(function()
+  currentPage=name
+  for title,content in pairs(pages) do content.Visible=(title==name);tabButtons[title].BackgroundColor3=title==name and Color3.fromRGB(33,123,172) or Color3.fromRGB(35,57,89) end
+ end)
+end
+pages['الرئيسية'].Visible=true;tabButtons['الرئيسية'].BackgroundColor3=Color3.fromRGB(33,123,172)
+makeLabel(frame,'RAFT CONTROL   |   V14',19,9,410,31,23,Color3.fromRGB(92,207,252))
+local hide=makeBtn(frame,'إخفاء',478,12,80,29,Color3.fromRGB(51,105,166))
+local close=makeBtn(frame,'إغلاق ×',570,12,87,29,Color3.fromRGB(151,62,79))
+local accountLabel=makeLabel(frame,'الحساب: '..LP.Name,19,43,625,22,14)
+local matsLabel=makeLabel(frame,'خشب: 0  |  حديد: 0  |  خردة: 0  |  ذهب: 0',19,68,625,22,14,Color3.fromRGB(148,236,179))
+local gainsLabel=makeLabel(frame,'التغير من بداية التشغيل: +0',19,92,625,22,13,Color3.fromRGB(247,208,149))
+local status=makeLabel(frame,'جاهز',19,497,635,18,12,Color3.fromRGB(138,202,243))
+local float=makeBtn(gui,'⚓ RAFT',0,0,110,42,Color3.fromRGB(34,122,182));float.Position=UDim2.new(1,-128,0,95);float.Visible=false;float.Active=true;float.Draggable=true
+hide.MouseButton1Click:Connect(function()frame.Visible=false;float.Visible=true end)
+float.MouseButton1Click:Connect(function()frame.Visible=true;float.Visible=false;fitScreen()end)
+local green=Color3.fromRGB(27,139,101);local blue=Color3.fromRGB(47,103,164)
+local red=Color3.fromRGB(161,64,81);local purple=Color3.fromRGB(109,77,173)
+local homePage=pages['الرئيسية']
+makeLabel(homePage,'لوحة التحكم الرئيسية',9,4,620,32,21)
+makeLabel(homePage,'التحكم بالتجميع والصناديق والفحص من صفحة واحدة. الإحصائيات تُقرأ من اللاعب مباشرة.',9,42,623,45,13)
+local quickResources=makeBtn(homePage,'⚙ تشغيل جمع الموارد',8,98,303,49,green)
+local quickStop=makeBtn(homePage,'■ إيقاف جميع العمليات',325,98,303,49,red)
+local quickChests=makeBtn(homePage,'فحص سفن اللاعبين',8,165,303,46,blue)
+local quickReport=makeBtn(homePage,'نسخ التقرير الشامل',325,165,303,46,purple)
+local homeNote=makeLabel(homePage,'الجمع والنقل يتطلبان قبول اللعبة الفعلي. محاولات التفاعل لا تعني نجاح النقل.',10,250,620,58,14,Color3.fromRGB(241,193,130))
+local rPage=pages['جمع الموارد']
+makeLabel(rPage,'جمع الموارد والفلاتر',9,3,620,31,21)
+local autoBtn=makeBtn(rPage,'▶ جمع تلقائي',7,48,303,42,green)
+local autoStopBtn=makeBtn(rPage,'■ إيقاف جمع الموارد',322,48,303,42,red)
+local filterBtn=makeBtn(rPage,'فلتر: جميع الموارد',7,100,303,42,blue)
+local rangeBtn=makeBtn(rPage,'نطاق: 2500',322,100,303,42,blue)
+local jumpBtn=makeBtn(rPage,'انتقال سريع: مفعل',7,152,303,42,purple)
+local speedBtn=makeBtn(rPage,'السرعة: 2000',322,152,303,42,purple)
+local touchBtn=makeBtn(rPage,'اختبار اللمس: مفعل',7,204,303,42,blue)
+makeLabel(rPage,'فلتر الحديد = صفائح معدنية؛ فلتر الخردة = براميل معدنية (تصنيف تجريبي).',8,264,616,44,13,Color3.fromRGB(235,195,133))
+local movePage=pages['التنقل']
+makeLabel(movePage,'التنقل والمواقع المحفوظة',9,3,615,31,21)
+local savedPosition=nil
+local savePositionBtn=makeBtn(movePage,'حفظ موقعي الحالي',8,48,302,44,blue)
+local goPositionBtn=makeBtn(movePage,'الرجوع للموقع المحفوظ',324,48,302,44,purple)
+local backRaftBtn=makeBtn(movePage,'الانتقال إلى سفينتي',8,108,618,44,green)
+local moveInfo=makeLabel(movePage,'لن تتم الحركة إذا لم تتوفر شخصية أو موقع معروف.',8,169,615,80,14)
+local pPage=pages['اللاعبون']
+makeLabel(pPage,'اللاعبون الموجودون في السيرفر',9,3,615,31,21)
+local playersInfo=makeLabel(pPage,'',8,45,620,46,14)
+local playerScroll=Instance.new('ScrollingFrame');playerScroll.Parent=pPage;playerScroll.Position=UDim2.fromOffset(8,98);playerScroll.Size=UDim2.fromOffset(619,265);playerScroll.BackgroundColor3=Color3.fromRGB(18,30,49);playerScroll.ScrollBarThickness=5;playerScroll.BorderSizePixel=0
+Instance.new('UICorner',playerScroll).CornerRadius=UDim.new(0,9)
+local listLayout=Instance.new('UIListLayout');listLayout.Padding=UDim.new(0,6);listLayout.Parent=playerScroll
+local cPage=pages['الصناديق']
+makeLabel(cPage,'فحص السفن والصناديق',9,3,615,31,21)
+local chestBtn=makeBtn(cPage,'فحص جميع صناديق السفن',8,43,303,45,blue)
+local warpChestBtn=makeBtn(cPage,'انتقال للصندوق التالي',324,43,303,45,purple)
+local chestAutoBtn=makeBtn(cPage,'بدء مراقبة الدرع والتفاعل',8,100,303,45,green)
+local chestStopBtn=makeBtn(cPage,'إيقاف مراقبة الصناديق',324,100,303,45,red)
+local chestInfo=makeLabel(cPage,'لم يتم فحص الصناديق بعد.',8,158,618,64,14,Color3.fromRGB(245,210,151))
+local chestTargetBtn=makeBtn(cPage,'الهدف: جميع السفن',8,232,618,42,blue)
+makeLabel(cPage,'يعتمد التفاعل على ظهور ProximityPrompt وحالة الدرع الظاهرة؛ التسليم غير مضمون.',8,290,618,51,13)
+local dPage=pages['الفحص والتقارير']
+makeLabel(dPage,'الفحص والتشخيص والتقارير',9,3,615,31,21)
+local start=makeBtn(dPage,'بدء الفحص المستمر',7,37,201,39,green)
+local stop=makeBtn(dPage,'إيقاف الفحص',220,37,198,39,red)
+local test=makeBtn(dPage,'اختبار السكربت',431,37,196,39,blue)
+local inventory=makeBtn(dPage,'المخزون',7,85,149,36,blue)
+local server=makeBtn(dPage,'واجهات مرئية',166,85,149,36,blue)
+local copy=makeBtn(dPage,'نسخ النتائج',326,85,149,36,purple)
+local reset=makeBtn(dPage,'مسح التقرير',485,85,142,36,red)
+local output=Instance.new('TextBox');output.Position=UDim2.fromOffset(7,136);output.Size=UDim2.fromOffset(619,226);output.BackgroundColor3=Color3.fromRGB(7,13,24);output.TextColor3=Color3.fromRGB(148,236,179);output.Font=Enum.Font.Code;output.TextSize=12;output.TextXAlignment=Enum.TextXAlignment.Left;output.TextYAlignment=Enum.TextYAlignment.Top;output.TextWrapped=true;output.MultiLine=true;output.TextEditable=false;output.ClearTextOnFocus=false;output.Text='جاهز للفحص';output.Parent=dPage;Instance.new('UICorner',output).CornerRadius=UDim.new(0,8)
+local settingPage=pages['الإعدادات']
+makeLabel(settingPage,'الإعدادات والتحكم',9,3,615,31,21)
+local settingScan=makeBtn(settingPage,'تشغيل فحص الموارد',9,49,300,44,blue)
+local settingStop=makeBtn(settingPage,'إيقاف كل الأنظمة',326,49,300,44,red)
+makeLabel(settingPage,'لتعديل سرعة الحركة والنطاق والفلتر افتح صفحة جمع الموارد.',9,117,620,58,14)
+makeLabel(settingPage,'زر الإخفاء يحافظ على تشغيل العمليات؛ زر الإغلاق يوقفها وينظف الاتصالات.',9,187,620,58,14)
 local function report()
- return table.concat({'RAFT CONTROL V13 FULL REPORT','PlaceId: '..game.PlaceId,'Player: '..LP.Name,'Entries retained: '..#logs,'Total events: '..total,'Projectiles: '..projectiles,'Changes: '..changes,'Candidates: '..scanCount..' | Auto active: '..tostring(auto)..' | Auto target: '..(autoTarget and autoTarget.Name or 'none'),'Filter='..resourceMode..'; range='..range..'; speed='..speed..'; instant jump='..tostring(jumpMode)..'; touch test='..tostring(touchMode)..'; touch attempts='..touchTries,'Materials: Wood='..tostring(LP:GetAttribute('Mat_Wood'))..' Metal='..tostring(LP:GetAttribute('Mat_Metal'))..' Scrap='..tostring(LP:GetAttribute('Mat_Scrap'))..' Gold='..tostring(LP:GetAttribute('Cash')),'Note: server controls actual materials; chest inspection does not confirm transfers.','===== ALL RESULTS IN TIME ORDER =====',table.concat(logs,'\n')},'\n')
+ return table.concat({'RAFT CONTROL V14 FULL REPORT','PlaceId: '..game.PlaceId,'Player: '..LP.Name,'Entries retained: '..#logs,'Total events: '..total,'Projectiles: '..projectiles,'Changes: '..changes,'Candidates: '..scanCount..' | Auto active: '..tostring(auto)..' | Auto target: '..(autoTarget and autoTarget.Name or 'none'),'Filter='..resourceMode..'; range='..range..'; speed='..speed..'; instant jump='..tostring(jumpMode)..'; touch test='..tostring(touchMode)..'; touch attempts='..touchTries,'Materials: Wood='..tostring(LP:GetAttribute('Mat_Wood'))..' Metal='..tostring(LP:GetAttribute('Mat_Metal'))..' Scrap='..tostring(LP:GetAttribute('Mat_Scrap'))..' Gold='..tostring(LP:GetAttribute('Cash')),'Note: server controls actual materials; chest inspection does not confirm transfers.','===== ALL RESULTS IN TIME ORDER =====',table.concat(logs,'\n')},'\n')
 end
 local function refresh()
  if not alive then return end
  status.Text=(running and 'SCANNING LIVE' or 'STOPPED')..' | AUTO: '..(auto and 'ON' or 'OFF')..' | '..resourceMode..' | Targets: '..scanCount
- matsLabel.Text='WOOD '..tostring(LP:GetAttribute('Mat_Wood') or 0)..' | METAL '..tostring(LP:GetAttribute('Mat_Metal') or 0)..' | SCRAP '..tostring(LP:GetAttribute('Mat_Scrap') or 0)..' | GOLD '..tostring(LP:GetAttribute('Cash') or 0)
- gainsLabel.Text='GAIN: W +'..((tonumber(LP:GetAttribute('Mat_Wood')) or 0)-initial.Wood)..' | M +'..((tonumber(LP:GetAttribute('Mat_Metal')) or 0)-initial.Metal)..' | S +'..((tonumber(LP:GetAttribute('Mat_Scrap')) or 0)-initial.Scrap)
+ matsLabel.Text='خشب '..tostring(LP:GetAttribute('Mat_Wood') or 0)..' | حديد '..tostring(LP:GetAttribute('Mat_Metal') or 0)..' | خردة '..tostring(LP:GetAttribute('Mat_Scrap') or 0)..' | ذهب '..tostring(LP:GetAttribute('Cash') or 0)
+ gainsLabel.Text='التغير: خشب '..((tonumber(LP:GetAttribute('Mat_Wood')) or 0)-initial.Wood)..' | حديد '..((tonumber(LP:GetAttribute('Mat_Metal')) or 0)-initial.Metal)..' | خردة '..((tonumber(LP:GetAttribute('Mat_Scrap')) or 0)-initial.Scrap)
  local lines={};for i=math.max(1,#logs-16),#logs do lines[#lines+1]=logs[i] end
  output.Text=table.concat(lines,'\n')
 end
@@ -494,14 +536,14 @@ local function chestScan()
 end
 filterBtn.MouseButton1Click:Connect(function()
  modeIndex=modeIndex%#modes+1;resourceMode=modes[modeIndex]
- filterBtn.Text='FILTER: '..resourceMode
+ filterBtn.Text='فلتر: '..resourceMode
  visited={};autoTarget=nil
  add('FILTER','Selected '..resourceMode..' (metal barrels=SCRAP; sheets=METAL; logs=WOOD)')
  refresh()
 end)
 rangeBtn.MouseButton1Click:Connect(function()
  range=(range==2500 and 3500 or range==3500 and 800 or 2500)
- rangeBtn.Text='RANGE: '..range
+ rangeBtn.Text='نطاق: '..range
  add('SCAN','Range updated '..range);refresh()
 end)
 chestBtn.MouseButton1Click:Connect(chestScan)
@@ -521,17 +563,17 @@ end)
 start.MouseButton1Click:Connect(begin)
 autoBtn.MouseButton1Click:Connect(function() if not running then begin()end;autoStart();refresh()end)
 autoStopBtn.MouseButton1Click:Connect(function()stopAuto();refresh()end)
-jumpBtn.MouseButton1Click:Connect(function()jumpMode=not jumpMode;jumpBtn.Text='FLASH: '..(jumpMode and 'ON' or 'OFF');add('AUTO','Instant near-target movement='..tostring(jumpMode));refresh()end)
-touchBtn.MouseButton1Click:Connect(function()touchMode=not touchMode;touchBtn.Text='TOUCH TEST: '..(touchMode and 'ON' or 'OFF');add('AUTO','Proximity touch experiment='..tostring(touchMode));refresh()end)
-speedBtn.MouseButton1Click:Connect(function()speed=(speed==2000 and 1000 or speed==1000 and 500 or speed==500 and 2000 or 2000);speedBtn.Text=tostring(speed);add('AUTO','Speed='..speed);refresh()end)
+jumpBtn.MouseButton1Click:Connect(function()jumpMode=not jumpMode;jumpBtn.Text='انتقال سريع: '..(jumpMode and 'مفعل' or 'متوقف');add('AUTO','Instant near-target movement='..tostring(jumpMode));refresh()end)
+touchBtn.MouseButton1Click:Connect(function()touchMode=not touchMode;touchBtn.Text='اختبار اللمس: '..(touchMode and 'مفعل' or 'متوقف');add('AUTO','Proximity touch experiment='..tostring(touchMode));refresh()end)
+speedBtn.MouseButton1Click:Connect(function()speed=(speed==2000 and 1000 or speed==1000 and 500 or speed==500 and 2000 or 2000);speedBtn.Text='السرعة: '..tostring(speed);add('AUTO','Speed='..speed);refresh()end)
 stop.MouseButton1Click:Connect(function()stopAuto();running=false;generation=generation+1;add('SYSTEM','STOPPED by user');refresh()end)
 test.MouseButton1Click:Connect(runTest)
 inventory.MouseButton1Click:Connect(function()snapshot();refresh()end)
 server.MouseButton1Click:Connect(function()serverVisible();refresh()end)
 copy.MouseButton1Click:Connect(function()
  local txt=report()
- if type(setclipboard)=='function' then local ok=pcall(setclipboard,txt);copy.Text=ok and 'COPIED ALL!' or 'COPY FAILED' else add('SYSTEM','Clipboard not supported') end
- task.delay(2,function()if alive then copy.Text='COPY EVERYTHING' end end)
+ if type(setclipboard)=='function' then local ok=pcall(setclipboard,txt);copy.Text=ok and 'تم النسخ' or 'فشل النسخ' else add('SYSTEM','Clipboard not supported') end
+ task.delay(2,function()if alive then copy.Text='نسخ النتائج' end end)
 end)
 reset.MouseButton1Click:Connect(function()logs={};total=0;changes=0;projectiles=0;add('SYSTEM','REPORT CLEARED');refresh()end)
 local function cleanup()
@@ -539,6 +581,166 @@ local function cleanup()
  for _,c in ipairs(links) do pcall(function()c:Disconnect()end) end
  if gui.Parent then gui:Destroy()end
 end
-env.RaftControlV13Stop=cleanup
-close.MouseButton1Click:Connect(cleanup)
-add('SYSTEM','V13 loaded; fast filter collection + chest scan. No guarantee of server acceptance.');refresh()
+env.RaftControlV14Stop=cleanup
+close.MouseButton1Click:Connect(function()cleanup()end)
+-- Additional V14 navigation and chest-monitor controls.
+local function getMyRaft()
+ local folder=workspace:FindFirstChild('Rafts')
+ if not folder then return nil end
+ for _,raft in ipairs(folder:GetChildren()) do
+  if raft.Name:lower():find(LP.Name:lower(),1,true) then return raft end
+ end
+end
+local function nearestPart(obj)
+ if obj:IsA('BasePart') then return obj end
+ return obj:FindFirstChildWhichIsA('BasePart',true)
+end
+local function sendTo(part)
+ local r=root();if not r or not part then return false end
+ local ok=pcall(function()r.CFrame=CFrame.new(part.Position+Vector3.new(0,4,0))end)
+ return ok
+end
+savePositionBtn.MouseButton1Click:Connect(function()
+ local r=root();if r then savedPosition=r.CFrame;moveInfo.Text='تم حفظ الموقع: '..tostring(r.Position);add('MOVE','saved '..tostring(r.Position)) end
+end)
+goPositionBtn.MouseButton1Click:Connect(function()
+ local r=root();if r and savedPosition then pcall(function()r.CFrame=savedPosition end);add('MOVE','returned to saved position')else moveInfo.Text='لا يوجد موقع محفوظ' end
+end)
+backRaftBtn.MouseButton1Click:Connect(function()
+ local raft=getMyRaft();local bp=raft and nearestPart(raft)
+ if sendTo(bp) then moveInfo.Text='تم طلب الانتقال إلى '..raft.Name;add('MOVE','requested own raft') else moveInfo.Text='سفينتك غير ظاهرة حاليا' end
+end)
+local function updatePlayers()
+ for _,item in ipairs(playerScroll:GetChildren()) do if item:IsA('GuiObject') then item:Destroy()end end
+ playersInfo.Text='عدد اللاعبين: '..#Players:GetPlayers()..' | اضغط اللاعب للانتقال إلى موقعه'
+ for _,plr in ipairs(Players:GetPlayers()) do
+  local line=makeBtn(playerScroll,(plr==LP and '● ' or '◉ ')..plr.DisplayName..'  (@'..plr.Name..')',3,0,590,38,plr==LP and Color3.fromRGB(44,101,89) or Color3.fromRGB(43,68,104))
+  line.MouseButton1Click:Connect(function()
+   if plr==LP then return end
+   local p=plr.Character and plr.Character:FindFirstChild('HumanoidRootPart')
+   if sendTo(p) then add('MOVE','requested near player '..plr.Name) else add('MOVE','player position unavailable '..plr.Name)end
+  end)
+ end
+ playerScroll.CanvasSize=UDim2.fromOffset(0,#Players:GetPlayers()*44)
+end
+hook(Players.PlayerAdded,updatePlayers);hook(Players.PlayerRemoving,function()task.defer(updatePlayers)end)
+updatePlayers()
+local chestActive=false
+local chestSerial=0
+local chosenRaft=nil
+local chestAttempts=0
+local function shieldStatus(raft)
+ for k,v in pairs(raft:GetAttributes()) do
+  local name=tostring(k):lower()
+  if name:find('shield',1,true) or name:find('protect',1,true) then
+   if v==true then return 'protected',k end
+   if v==false then return 'unprotected',k end
+  end
+ end
+ for _,o in ipairs(raft:GetDescendants()) do
+  if o:IsA('ForceField') then return 'protected','ForceField' end
+  if o:IsA('BoolValue') and o.Name:lower():find('shield',1,true) then return o.Value and 'protected' or 'unprotected',o.Name end
+ end
+ return 'unknown','no verified state'
+end
+local function searchChestPrompt(raft)
+ for _,o in ipairs(raft:GetDescendants()) do
+  if o:IsA('ProximityPrompt') and o.Enabled then
+   local par=o.Parent
+   local str=(o.Name..' '..o.ActionText..' '..o.ObjectText..' '..(par and par.Name or '')):lower()
+   if str:find('chest',1,true) or str:find('steal',1,true) or str:find('صندوق',1,true) then
+    local bp=par and nearestPart(par)
+    if bp then return o,bp end
+   end
+  end
+ end
+end
+local function chooseRaft()
+ local rafts=workspace:FindFirstChild('Rafts');if not rafts then return nil end
+ local names={}
+ for _,raft in ipairs(rafts:GetChildren()) do
+  if raft~=getMyRaft() then names[#names+1]=raft end
+ end
+ table.sort(names,function(a,b)return a.Name<b.Name end)
+ if #names==0 then return nil end
+ local idx=1
+ for i,x in ipairs(names) do if x==chosenRaft then idx=i%#names+1;break end end
+ chosenRaft=names[idx];return chosenRaft
+end
+chestTargetBtn.MouseButton1Click:Connect(function()
+ local raft=chooseRaft();chestTargetBtn.Text=raft and ('الهدف: '..raft.Name) or 'لا توجد سفن أخرى'
+ if raft then local s,reason=shieldStatus(raft);chestInfo.Text='الحالة المرئية: '..s..' | '..reason end
+end)
+local function attemptPrompt(prompt)
+ if not prompt.Parent or not prompt.Enabled then return false,'prompt disabled' end
+ if type(fireproximityprompt)=='function' then
+  local ok,err=pcall(function()fireproximityprompt(prompt,math.max(prompt.HoldDuration,0))end)
+  return ok,ok and 'requested prompt' or tostring(err)
+ end
+ local ok,err=pcall(function()
+  local vim=game:GetService('VirtualInputManager')
+  vim:SendKeyEvent(true,Enum.KeyCode.E,false,game)
+  task.wait(math.max(prompt.HoldDuration+.2,.3))
+  vim:SendKeyEvent(false,Enum.KeyCode.E,false,game)
+ end)
+ return ok,ok and 'requested key press' or tostring(err)
+end
+chestAutoBtn.MouseButton1Click:Connect(function()
+ if chestActive then return end
+ stopAuto();chestActive=true;chestSerial=chestSerial+1;local id=chestSerial
+ add('CHEST','monitor started; unknown shield => wait')
+ task.spawn(function()
+  while alive and chestActive and id==chestSerial do
+   local folder=workspace:FindFirstChild('Rafts');local mine=getMyRaft()
+   if folder and mine then
+    for _,raft in ipairs(folder:GetChildren()) do
+     if not chestActive or id~=chestSerial then break end
+     if raft~=mine and (not chosenRaft or raft==chosenRaft) then
+      local shield,reason=shieldStatus(raft)
+      chestInfo.Text=raft.Name..' | الدرع: '..shield..' ('..reason..')'
+      if shield=='unprotected' then
+       local prompt,part=searchChestPrompt(raft)
+       if prompt and part and (os.clock()-(visited[prompt] or 0)>0) then
+        visited[prompt]=os.clock()+8
+        chestAttempts=chestAttempts+1
+        add('CHEST','attempt '..chestAttempts..' on '..raft.Name..' | '..path(prompt))
+        if sendTo(part) then
+         task.wait(.25)
+         local nowShield=shieldStatus(raft)
+         if nowShield=='unprotected' then
+          local ok,msg=attemptPrompt(prompt)
+          add('CHEST','interaction requested='..tostring(ok)..' | '..msg..' | pickup NOT verified')
+          task.wait(.65)
+          local home=nearestPart(mine)
+          if sendTo(home) then add('CHEST','returned to own raft; delivery NOT verified')end
+         end
+        end
+       end
+      end
+     end
+    end
+   else chestInfo.Text='موقع سفينتك أو قائمة السفن غير متاح' end
+   task.wait(1)
+  end
+ end)
+end)
+chestStopBtn.MouseButton1Click:Connect(function()
+ chestActive=false;chestSerial=chestSerial+1;add('CHEST','monitor stopped');chestInfo.Text='مراقبة الصناديق متوقفة'
+end)
+quickResources.MouseButton1Click:Connect(function()if not running then begin()end;autoStart()end)
+quickStop.MouseButton1Click:Connect(function()stopAuto();running=false;generation=generation+1;chestActive=false;chestSerial=chestSerial+1;add('SYSTEM','all operations stopped');refresh()end)
+quickChests.MouseButton1Click:Connect(function()chestScan();chestInfo.Text='صناديق مرئية: '..#foundChests..' | اختر صفحة الصناديق' end)
+quickReport.MouseButton1Click:Connect(function()
+ if type(setclipboard)=='function' then pcall(setclipboard,report());add('REPORT','copied full session report')else add('REPORT','clipboard unavailable')end
+end)
+settingScan.MouseButton1Click:Connect(begin)
+settingStop.MouseButton1Click:Connect(function()stopAuto();running=false;generation=generation+1;chestActive=false;chestSerial=chestSerial+1;refresh()end)
+-- Ensure chest monitor exits when script is reloaded or UI closed.
+local oldCleanup=cleanup
+cleanup=function()
+ chestActive=false;chestSerial=chestSerial+1
+ oldCleanup()
+end
+env.RaftControlV14Stop=cleanup
+add('SYSTEM','V14 loaded; landscape Arabic GUI. Server acceptance required.');refresh()
+
