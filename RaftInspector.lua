@@ -356,7 +356,7 @@ local pages={};local tabButtons={};local currentPage='الرئيسية'
 local function page(name)
  local p=Instance.new('Frame');p.Name=name;p.Size=UDim2.fromOffset(646,382);p.Position=UDim2.fromOffset(16,127);p.BackgroundTransparency=1;p.Visible=false;p.Parent=frame;pages[name]=p;return p
 end
-local names={'الرئيسية','جمع الموارد','التنقل','اللاعبون','الصناديق','الفحص والتقارير','الإعدادات'}
+local names={'الرئيسية','جمع الموارد','التنقل','اللاعبون','الصناديق','الفحص والتقارير','الإعدادات','اختبارات'}
 for i,name in ipairs(names) do
  local tab=makeBtn(sidebar,name,10,53+(i-1)*52,162,43,Color3.fromRGB(35,57,89));tabButtons[name]=tab
  page(name)
@@ -434,6 +434,126 @@ local settingScan=makeBtn(settingPage,'تشغيل فحص الموارد',9,49,30
 local settingStop=makeBtn(settingPage,'إيقاف كل الأنظمة',326,49,300,44,red)
 makeLabel(settingPage,'لتعديل سرعة الحركة والنطاق والفلتر افتح صفحة جمع الموارد.',9,117,620,58,14)
 makeLabel(settingPage,'زر الإخفاء يحافظ على تشغيل العمليات؛ زر الإغلاق يوقفها وينظف الاتصالات.',9,187,620,58,14)
+-- Experimental test tab: read-only proximity sweep plus optional touch-interest experiment.
+-- This intentionally never activates/equips the harpoon and never claims server grants.
+local testPage=pages['اختبارات']
+makeLabel(testPage,'اختبارات | هالة التقاط الموارد (Aura Pickup)',6,2,630,30,19)
+makeLabel(testPage,'اختبار مستقل عن الحربة؛ العثور على مورد أو إرسال لمس لا يثبت جمعه.',6,35,632,40,13,Color3.fromRGB(252,210,146))
+local auraOn=false
+local auraRadius=250
+local auraRadii={100,250,500,1000,2500}
+local auraRadiusIndex=2
+local auraMode='ALL'
+local auraModes={'ALL','WOOD','METAL','SCRAP','CHESTS','OTHER'}
+local auraModeIndex=1
+local auraAttempts=0
+local auraFound=0
+local auraTouchSupported=type(firetouchinterest)=='function'
+local auraTouched={}
+local auraInitial={Wood=tonumber(LP:GetAttribute('Mat_Wood')) or 0,Metal=tonumber(LP:GetAttribute('Mat_Metal')) or 0,Scrap=tonumber(LP:GetAttribute('Mat_Scrap')) or 0}
+local auraDetected=makeLabel(testPage,'الموارد داخل النطاق: 0 | محاولات لمس: 0',7,94,622,27,14)
+local auraResults=makeLabel(testPage,'زيادة المخزون أثناء الاختبار: خشب 0 | حديد 0 | خردة 0',7,124,622,43,13,Color3.fromRGB(141,232,171))
+local auraStartButton=makeBtn(testPage,'بدء اختبار الأورا',7,175,301,42,green)
+local auraStopButton=makeBtn(testPage,'إيقاف اختبار الأورا',321,175,306,42,red)
+local auraFilterButton=makeBtn(testPage,'الفلتر: الكل',7,226,301,42,blue)
+local auraRadiusButton=makeBtn(testPage,'نطاق الفحص: 250',321,226,306,42,purple)
+local auraStatus=makeLabel(testPage,'الحالة: متوقف | واجهة اللمس: '..(auraTouchSupported and 'متاحة' or 'غير متاحة'),7,279,622,33,13)
+local auraCopyButton=makeBtn(testPage,'نسخ تقرير الاختبار',7,320,620,42,blue)
+local function auraMatches(obj)
+ return auraMode=='ALL' or resourceType(obj)==auraMode
+end
+local function auraUpdate()
+ if not alive then return end
+ local w=(tonumber(LP:GetAttribute('Mat_Wood')) or 0)-auraInitial.Wood
+ local m=(tonumber(LP:GetAttribute('Mat_Metal')) or 0)-auraInitial.Metal
+ local c=(tonumber(LP:GetAttribute('Mat_Scrap')) or 0)-auraInitial.Scrap
+ auraDetected.Text='الموارد داخل النطاق: '..auraFound..' | محاولات لمس: '..auraAttempts
+ auraResults.Text='تغير المخزون منذ بدء الاختبار: خشب '..w..' | حديد '..m..' | خردة '..c
+ auraStatus.Text='الحالة: '..(auraOn and 'يعمل' or 'متوقف')..' | واجهة اللمس: '..(auraTouchSupported and 'متاحة' or 'غير متاحة')
+end
+local function auraStop()
+ if auraOn then auraOn=false;add('AURA','test stopped; attempts='..auraAttempts) end
+ auraUpdate()
+end
+local function auraStart()
+ if auraOn then return end
+ -- Keep the experiment isolated from harpoon collection for meaningful inventory deltas.
+ if auto then stopAuto();add('AURA','existing harpoon auto stopped for isolated test') end
+ auraOn=true
+ auraAttempts=0;auraFound=0;auraTouched={}
+ auraInitial={Wood=tonumber(LP:GetAttribute('Mat_Wood')) or 0,Metal=tonumber(LP:GetAttribute('Mat_Metal')) or 0,Scrap=tonumber(LP:GetAttribute('Mat_Scrap')) or 0}
+ add('AURA','test started | radius='..auraRadius..' | filter='..auraMode..' | touchAPI='..tostring(auraTouchSupported)..' | no weapon')
+ task.spawn(function()
+  local lastSummary=0
+  while alive and auraOn do
+   local ok,err=pcall(function()
+    -- This scans what the client has streamed; it cannot discover absent server objects.
+    scanCandidates()
+    local hr=root()
+    if not hr then return end
+    local count=0
+    local current=os.clock()
+    for obj,item in pairs(candidates) do
+     if obj.Parent and item.part and item.part.Parent and auraMatches(obj) then
+      local part=item.part
+      local distance=(part.Position-hr.Position).Magnitude
+      if part.Position.Y>-500 and distance<=auraRadius then
+       count=count+1
+       -- Test-only synthetic touch signal. This may be ignored by the game's server.
+       if auraTouchSupported and part.CanTouch and (auraTouched[obj] or 0)<current and auraAttempts<5000 then
+        auraTouched[obj]=current+2
+        local fired=pcall(function()
+         firetouchinterest(hr,part,0)
+         firetouchinterest(hr,part,1)
+        end)
+        auraAttempts=auraAttempts+1
+        if auraAttempts<=8 or auraAttempts%30==0 then
+         add('AURA TOUCH','target='..obj.Name..' distance='..math.floor(distance)..' signal='..tostring(fired)..' (not collection confirmation)')
+        end
+       end
+      end
+     end
+    end
+    auraFound=count
+    auraUpdate()
+    if current-lastSummary>8 then
+     lastSummary=current
+     add('AURA SCAN','visible targets='..count..' radius='..auraRadius..' filter='..auraMode..' attempts='..auraAttempts)
+    end
+   end)
+   if not ok then add('AURA ERROR',tostring(err))end
+   task.wait(.4)
+  end
+ end)
+ auraUpdate()
+end
+auraStartButton.MouseButton1Click:Connect(auraStart)
+auraStopButton.MouseButton1Click:Connect(auraStop)
+auraFilterButton.MouseButton1Click:Connect(function()
+ auraModeIndex=auraModeIndex%#auraModes+1
+ auraMode=auraModes[auraModeIndex]
+ auraFilterButton.Text='الفلتر: '..auraMode
+ add('AURA','filter='..auraMode)
+end)
+auraRadiusButton.MouseButton1Click:Connect(function()
+ auraRadiusIndex=auraRadiusIndex%#auraRadii+1
+ auraRadius=auraRadii[auraRadiusIndex]
+ auraRadiusButton.Text='نطاق الفحص: '..auraRadius
+ add('AURA','radius='..auraRadius)
+end)
+auraCopyButton.MouseButton1Click:Connect(function()
+ local txt='AURA TEST | player='..LP.Name..' radius='..auraRadius..' filter='..auraMode
+  ..' visible='..auraFound..' touchAttempts='..auraAttempts
+  ..' touchSupported='..tostring(auraTouchSupported)
+  ..' | inventory delta W='..((tonumber(LP:GetAttribute('Mat_Wood')) or 0)-auraInitial.Wood)
+  ..' M='..((tonumber(LP:GetAttribute('Mat_Metal')) or 0)-auraInitial.Metal)
+  ..' S='..((tonumber(LP:GetAttribute('Mat_Scrap')) or 0)-auraInitial.Scrap)
+  ..'\nTOUCH IS NOT PROOF OF SERVER HARVEST\n'..table.concat(logs,'\n')
+ if type(setclipboard)=='function' then
+  local ok=pcall(setclipboard,txt)
+  add('AURA',ok and 'report copied' or 'clipboard error')
+ else add('AURA','setclipboard unavailable') end
+end)
 local function report()
  return table.concat({'RAFT CONTROL V14 FULL REPORT','PlaceId: '..game.PlaceId,'Player: '..LP.Name,'Entries retained: '..#logs,'Total events: '..total,'Projectiles: '..projectiles,'Changes: '..changes,'Candidates: '..scanCount..' | Auto active: '..tostring(auto)..' | Auto target: '..(autoTarget and autoTarget.Name or 'none'),'Filter='..resourceMode..'; range='..range..'; speed='..speed..'; instant jump='..tostring(jumpMode)..'; touch test='..tostring(touchMode)..'; touch attempts='..touchTries,'Materials: Wood='..tostring(LP:GetAttribute('Mat_Wood'))..' Metal='..tostring(LP:GetAttribute('Mat_Metal'))..' Scrap='..tostring(LP:GetAttribute('Mat_Scrap'))..' Gold='..tostring(LP:GetAttribute('Cash')),'Note: server controls actual materials; chest inspection does not confirm transfers.','===== ALL RESULTS IN TIME ORDER =====',table.concat(logs,'\n')},'\n')
 end
@@ -746,9 +866,10 @@ settingStop.MouseButton1Click:Connect(function()stopAuto();running=false;generat
 -- Ensure chest monitor exits when script is reloaded or UI closed.
 local oldCleanup=cleanup
 cleanup=function()
+ auraOn=false
  chestActive=false;chestSerial=chestSerial+1
  oldCleanup()
 end
 env.RaftControlV14Stop=cleanup
-add('SYSTEM','V14 loaded; landscape Arabic GUI. Server acceptance required.');refresh()
+add('SYSTEM','V14.2 loaded; test-only aura page added. Existing auto collector untouched.');refresh()
 
