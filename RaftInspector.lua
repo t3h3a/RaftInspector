@@ -1,220 +1,1015 @@
--- Raft Inspector | client-visible diagnostics only
--- Upload this file to a public GitHub repository and use its Raw URL.
-local Players = game:GetService('Players')
-local UIS = game:GetService('UserInputService')
+--[[
+    RAFT INSPECTOR V5
+    Build and Defend Your Raft
+    30 Second Diagnostic Scanner
+]]
+
+--====================================
+-- SERVICES
+--====================================
+
+local Players = game:GetService("Players")
+local UIS = game:GetService("UserInputService")
+local RunService = game:GetService("RunService")
+
 local player = Players.LocalPlayer
-if not player then return end
-local pg = player:WaitForChild('PlayerGui')
-local old = pg:FindFirstChild('RaftInspectorFinal')
-if old then old:Destroy() end
+local pg = player:WaitForChild("PlayerGui")
+local camera = workspace.CurrentCamera
 
-local DURATION, RANGE, INTERVAL, LIMIT = 30, 220, 0.75, 250
-local words = {'wood','metal','iron','steel','scrap','loot','chest','crate','barrel','resource','pickup','floating','plank','log','supply','treasure','drop'}
-local logs = {Resources={}, Events={}, Others={}, Test={}}
-local seen, last = {}, {}
-local running, generation, clicks, remaining, tab = false, 0, 0, DURATION, 'Resources'
-local alive = true
-local function record(section, message)
-    local a=logs[section]
-    if #a<LIMIT then a[#a+1]=string.format('[%.1f] %s',os.clock(),tostring(message)) end
+--====================================
+-- CLEAN OLD INSTANCE
+--====================================
+
+local previousGUI = pg:FindFirstChild("RaftInspectorV5")
+
+if previousGUI then
+    previousGUI:Destroy()
 end
-local function safePath(x)
-    local ok,v=pcall(function() return x:GetFullName() end)
-    return ok and v or '<removed>'
-end
-local function ignored(x)
-    local char=player.Character
-    if char and x:IsDescendantOf(char) then return true end
-    local p=x
-    while p and p~=workspace do
-        if p.Name=='Rafts' then return true end
-        p=p.Parent
+
+-- Stop previous script connections if rerun
+if getgenv then
+    local env = getgenv()
+
+    if env.RaftInspectorV5Cleanup then
+        pcall(env.RaftInspectorV5Cleanup)
     end
-    return false
 end
-local function candidate(name)
-    name=string.lower(name)
-    for _,w in ipairs(words) do if string.find(name,w,1,true) then return true end end
-    return false
+
+--====================================
+-- SETTINGS
+--====================================
+
+local DURATION = 30
+local RANGE = 250
+local INTERVAL = 0.4
+local MAX_LOGS = 300
+
+local keywords = {
+    "wood",
+    "metal",
+    "iron",
+    "steel",
+    "scrap",
+    "loot",
+    "chest",
+    "crate",
+    "barrel",
+    "resource",
+    "pickup",
+    "floating",
+    "plank",
+    "log",
+    "supply",
+    "treasure",
+    "drop",
+    "harpoon"
+}
+
+--====================================
+-- STATE
+--====================================
+
+local running = false
+local scanID = 0
+local timeLeft = DURATION
+
+local seen = {}
+local nearbyPrevious = {}
+
+local logs = {
+    Resources = {},
+    Events = {},
+    Targets = {},
+    Test = {}
+}
+
+local stats = {
+    clicks = 0,
+    resources = 0,
+    targets = 0,
+    appeared = 0,
+    disappeared = 0
+}
+
+local connections = {}
+local currentTab = "Resources"
+local minimized = false
+
+--====================================
+-- HELPERS
+--====================================
+
+local function timestamp()
+    return string.format("%.2f", os.clock())
 end
+
+local function addLog(category, message)
+    local list = logs[category]
+
+    if not list then
+        return
+    end
+
+    if #list >= MAX_LOGS then
+        return
+    end
+
+    table.insert(
+        list,
+        "[" .. timestamp() .. "] " .. tostring(message)
+    )
+end
+
+local function safePath(obj)
+    if not obj then
+        return "<none>"
+    end
+
+    local ok, result = pcall(function()
+        return obj:GetFullName()
+    end)
+
+    return ok and result or "<unavailable>"
+end
+
+local function getCharacter()
+    return player.Character
+end
+
+local function getRoot()
+    local character = getCharacter()
+
+    return character and
+        character:FindFirstChild("HumanoidRootPart")
+end
+
+local function getTool()
+    local character = getCharacter()
+
+    return character and
+        character:FindFirstChildOfClass("Tool")
+end
+
 local function toolName()
-    local c=player.Character
-    local t=c and c:FindFirstChildOfClass('Tool')
-    return t and t.Name or '<none>'
-end
-local function report()
-    local a={'RAFT INSPECTOR REPORT','PlaceId: '..tostring(game.PlaceId),'Scan duration: '..DURATION..'s','Range: '..RANGE,'Clicks observed: '..clicks,'Current tool: '..toolName()}
-    for _,section in ipairs({'Resources','Events','Others','Test'}) do
-        a[#a+1]='\n===== '..string.upper(section)..' ('..#logs[section]..') ====='
-        for _,v in ipairs(logs[section]) do a[#a+1]=v end
-    end
-    return table.concat(a,'\n')
+    local tool = getTool()
+
+    return tool and tool.Name or "<none>"
 end
 
-local gui=Instance.new('ScreenGui')
-gui.Name='RaftInspectorFinal';gui.ResetOnSpawn=false;gui.IgnoreGuiInset=true;gui.DisplayOrder=999;gui.Parent=pg
-local frame=Instance.new('Frame')
-frame.Size=UDim2.fromOffset(370,465);frame.Position=UDim2.new(.5,-185,.5,-232)
-frame.BackgroundColor3=Color3.fromRGB(20,26,42);frame.BorderSizePixel=0;frame.Active=true;frame.Parent=gui
-Instance.new('UICorner',frame).CornerRadius=UDim.new(0,13)
-local border=Instance.new('UIStroke',frame);border.Color=Color3.fromRGB(76,135,210);border.Thickness=1
-local function label(text,x,y,w,h,size)
-    local z=Instance.new('TextLabel');z.BackgroundTransparency=1;z.Position=UDim2.fromOffset(x,y);z.Size=UDim2.fromOffset(w,h)
-    z.Text=text;z.TextColor3=Color3.fromRGB(230,240,255);z.TextSize=size or 13;z.Font=Enum.Font.GothamBold
-    z.TextXAlignment=Enum.TextXAlignment.Left;z.Parent=frame;return z
+local function isIgnored(obj)
+    if not obj then
+        return true
+    end
+
+    local character = getCharacter()
+
+    if character and obj:IsDescendantOf(character) then
+        return true
+    end
+
+    local current = obj
+
+    while current and current ~= workspace do
+        if current.Name == "Rafts" then
+            return true
+        end
+
+        current = current.Parent
+    end
+
+    return false
 end
-local function button(text,x,y,w,h,color)
-    local z=Instance.new('TextButton');z.Position=UDim2.fromOffset(x,y);z.Size=UDim2.fromOffset(w,h)
-    z.Text=text;z.TextSize=12;z.Font=Enum.Font.GothamBold;z.TextColor3=Color3.new(1,1,1)
-    z.BackgroundColor3=color or Color3.fromRGB(58,78,116);z.Parent=frame
-    Instance.new('UICorner',z).CornerRadius=UDim.new(0,7);return z
+
+local function matchesResource(name)
+    name = string.lower(tostring(name))
+
+    for _, word in ipairs(keywords) do
+        if string.find(name, word, 1, true) then
+            return true
+        end
+    end
+
+    return false
 end
-local title=label('RAFT INSPECTOR',12,8,245,30,18)
-local close=button('X',331,8,29,29,Color3.fromRGB(176,60,69))
-local minimize=button('-',295,8,29,29,Color3.fromRGB(75,85,108))
-local status=label('READY | 30 seconds',12,43,346,24,13)
-local stats=label('Resources: 0  |  Others: 0  |  Clicks: 0',12,69,346,23,12)
-local start=button('START 30s',12,102,109,36,Color3.fromRGB(29,146,98))
-local stop=button('STOP',130,102,109,36,Color3.fromRGB(173,73,76))
-local reset=button('RESET',248,102,110,36)
-local tabs={}
-for i,name in ipairs({'Resources','Events','Others','Test'}) do
-    tabs[name]=button(string.upper(name),12+(i-1)*89,149,83,33)
+
+local function getDistance(part)
+    local root = getRoot()
+
+    if not root or not part then
+        return -1
+    end
+
+    return math.floor(
+        (root.Position - part.Position).Magnitude
+    )
 end
-local box=Instance.new('TextBox')
-box.Position=UDim2.fromOffset(12,191);box.Size=UDim2.fromOffset(346,209)
-box.BackgroundColor3=Color3.fromRGB(9,15,27);box.TextColor3=Color3.fromRGB(138,241,185)
-box.Font=Enum.Font.Code;box.TextSize=12;box.TextXAlignment=Enum.TextXAlignment.Left;box.TextYAlignment=Enum.TextYAlignment.Top
-box.MultiLine=true;box.TextWrapped=true;box.ClearTextOnFocus=false;box.TextEditable=true
-box.Text='Press START. Move near floating items and fire the harpoon.\nTEST tab checks basic functionality.';box.Parent=frame
-Instance.new('UICorner',box).CornerRadius=UDim.new(0,7)
-local copy=button('COPY FULL REPORT',12,412,220,40,Color3.fromRGB(83,70,181))
-local test=button('RUN TEST',242,412,116,40,Color3.fromRGB(37,110,157))
-local content={status,stats,start,stop,reset,box,copy,test}
-for _,b in pairs(tabs) do content[#content+1]=b end
+
+local function describeObject(obj)
+    if not obj then
+        return "<none>"
+    end
+
+    return
+        "NAME: " .. obj.Name ..
+        "\nCLASS: " .. obj.ClassName ..
+        "\nPATH: " .. safePath(obj)
+end
+
+--====================================
+-- GUI
+--====================================
+
+local gui = Instance.new("ScreenGui")
+gui.Name = "RaftInspectorV5"
+gui.ResetOnSpawn = false
+gui.IgnoreGuiInset = true
+gui.DisplayOrder = 999
+gui.Parent = pg
+
+local frame = Instance.new("Frame")
+frame.Name = "Main"
+frame.Size = UDim2.fromOffset(390, 510)
+frame.Position = UDim2.new(0.5, -195, 0.5, -255)
+frame.BackgroundColor3 = Color3.fromRGB(18, 23, 38)
+frame.BorderSizePixel = 0
+frame.Active = true
+frame.Draggable = true
+frame.Parent = gui
+
+local corner = Instance.new("UICorner")
+corner.CornerRadius = UDim.new(0, 14)
+corner.Parent = frame
+
+local border = Instance.new("UIStroke")
+border.Color = Color3.fromRGB(75, 125, 210)
+border.Thickness = 1.5
+border.Parent = frame
+
+local function createLabel(text, x, y, w, h, size, color)
+    local label = Instance.new("TextLabel")
+
+    label.Position = UDim2.fromOffset(x, y)
+    label.Size = UDim2.new(w, 0, 0, h)
+
+    label.BackgroundTransparency = 1
+    label.Text = text
+    label.TextSize = size or 14
+    label.Font = Enum.Font.GothamBold
+
+    label.TextColor3 =
+        color or Color3.fromRGB(240, 245, 255)
+
+    label.TextXAlignment = Enum.TextXAlignment.Left
+    label.Parent = frame
+
+    return label
+end
+
+local function createButton(text, x, y, w, h, color)
+    local button = Instance.new("TextButton")
+
+    button.Position = UDim2.fromOffset(x, y)
+    button.Size = UDim2.fromOffset(w, h)
+
+    button.BackgroundColor3 = color
+    button.BorderSizePixel = 0
+
+    button.Text = text
+    button.TextColor3 = Color3.new(1, 1, 1)
+    button.TextSize = 13
+    button.Font = Enum.Font.GothamBold
+
+    button.Parent = frame
+
+    local c = Instance.new("UICorner")
+    c.CornerRadius = UDim.new(0, 8)
+    c.Parent = button
+
+    return button
+end
+
+--====================================
+-- HEADER
+--====================================
+
+local title = createLabel(
+    "RAFT INSPECTOR V5",
+    15, 10, 280, 30, 19,
+    Color3.fromRGB(115, 200, 255)
+)
+
+local minimize = createButton(
+    "-", 310, 10, 30, 30,
+    Color3.fromRGB(70, 85, 115)
+)
+
+local close = createButton(
+    "X", 347, 10, 30, 30,
+    Color3.fromRGB(190, 55, 70)
+)
+
+local status = createLabel(
+    "STATUS: READY",
+    15, 50, 350, 25, 14,
+    Color3.fromRGB(100, 255, 165)
+)
+
+local timer = createLabel(
+    "TIME: 30s",
+    15, 82, 150, 25, 16,
+    Color3.fromRGB(255, 220, 110)
+)
+
+local counter = createLabel(
+    "Clicks: 0 | Resources: 0",
+    165, 82, 210, 25, 12
+)
+
+--====================================
+-- CONTROL BUTTONS
+--====================================
+
+local start = createButton(
+    "START",
+    12, 120, 115, 40,
+    Color3.fromRGB(35, 150, 95)
+)
+
+local stop = createButton(
+    "STOP",
+    137, 120, 115, 40,
+    Color3.fromRGB(185, 65, 70)
+)
+
+local reset = createButton(
+    "RESET",
+    262, 120, 115, 40,
+    Color3.fromRGB(75, 95, 145)
+)
+
+--====================================
+-- TABS
+--====================================
+
+local tabResources = createButton(
+    "RESOURCES",
+    12, 175, 115, 34,
+    Color3.fromRGB(45, 115, 190)
+)
+
+local tabEvents = createButton(
+    "EVENTS",
+    137, 175, 115, 34,
+    Color3.fromRGB(55, 65, 90)
+)
+
+local tabTargets = createButton(
+    "TARGETS",
+    262, 175, 115, 34,
+    Color3.fromRGB(55, 65, 90)
+)
+
+local tabTest = createButton(
+    "TEST",
+    12, 219, 115, 34,
+    Color3.fromRGB(55, 65, 90)
+)
+
+local runTest = createButton(
+    "RUN TEST",
+    137, 219, 240, 34,
+    Color3.fromRGB(75, 105, 165)
+)
+
+--====================================
+-- OUTPUT
+--====================================
+
+local output = Instance.new("TextBox")
+
+output.Position = UDim2.fromOffset(12, 265)
+output.Size = UDim2.fromOffset(366, 175)
+
+output.BackgroundColor3 = Color3.fromRGB(9, 14, 25)
+output.BorderSizePixel = 0
+
+output.TextColor3 = Color3.fromRGB(135, 255, 180)
+output.TextSize = 12
+output.Font = Enum.Font.Code
+
+output.TextXAlignment = Enum.TextXAlignment.Left
+output.TextYAlignment = Enum.TextYAlignment.Top
+
+output.TextWrapped = true
+output.MultiLine = true
+output.TextEditable = true
+output.ClearTextOnFocus = false
+
+output.Text = "READY. Press START to scan."
+
+output.Parent = frame
+
+Instance.new("UICorner", output).CornerRadius =
+    UDim.new(0, 8)
+
+local copy = createButton(
+    "COPY ALL REPORT",
+    12, 451, 280, 44,
+    Color3.fromRGB(95, 75, 200)
+)
+
+local copyTab = createButton(
+    "COPY TAB",
+    302, 451, 76, 44,
+    Color3.fromRGB(55, 115, 165)
+)
+
+--====================================
+-- DISPLAY
+--====================================
+
 local function refresh()
-    if not alive then return end
-    stats.Text=string.format('Resources: %d  |  Others: %d  |  Clicks: %d',#logs.Resources,#logs.Others,clicks)
-    local a=logs[tab]
-    box.Text=(#a>0) and table.concat(a,'\n') or ('No '..tab..' entries yet.')
-    for name,b in pairs(tabs) do b.BackgroundColor3=(name==tab) and Color3.fromRGB(39,118,185) or Color3.fromRGB(55,68,95) end
+    if not gui.Parent then
+        return
+    end
+
+    local list = logs[currentTab]
+
+    output.Text = #list > 0
+        and table.concat(list, "\n\n")
+        or "No results yet."
+
+    counter.Text =
+        "Clicks: " .. stats.clicks ..
+        " | Resources: " .. stats.resources
 end
-for name,b in pairs(tabs) do b.MouseButton1Click:Connect(function() tab=name;refresh() end) end
-local function scan()
-    local c=player.Character
-    local root=c and c:FindFirstChild('HumanoidRootPart')
-    if not root then record('Events','Character/root missing');return end
-    local ok,parts=pcall(function() return workspace:GetPartBoundsInRadius(root.Position,RANGE) end)
-    if not ok then record('Events','Spatial scan failed: '..tostring(parts));return end
-    local current={}
-    for _,part in ipairs(parts) do
-        if part:IsA('BasePart') and not ignored(part) then
-            local obj=part:FindFirstAncestorOfClass('Model') or part
-            if not ignored(obj) then
-                current[obj]=true
+
+local function selectTab(name)
+    currentTab = name
+
+    local buttons = {
+        Resources = tabResources,
+        Events = tabEvents,
+        Targets = tabTargets,
+        Test = tabTest
+    }
+
+    for tabName, button in pairs(buttons) do
+        button.BackgroundColor3 =
+            tabName == name
+            and Color3.fromRGB(45, 115, 190)
+            or Color3.fromRGB(55, 65, 90)
+    end
+
+    refresh()
+end
+
+tabResources.MouseButton1Click:Connect(function()
+    selectTab("Resources")
+end)
+
+tabEvents.MouseButton1Click:Connect(function()
+    selectTab("Events")
+end)
+
+tabTargets.MouseButton1Click:Connect(function()
+    selectTab("Targets")
+end)
+
+tabTest.MouseButton1Click:Connect(function()
+    selectTab("Test")
+end)
+
+--====================================
+-- RAYCAST TARGET
+--====================================
+
+local function inspectRay()
+    local root = getRoot()
+    local cam = workspace.CurrentCamera
+
+    if not root or not cam then
+        return
+    end
+
+    local mousePos = UIS:GetMouseLocation()
+
+    local ray = cam:ViewportPointToRay(
+        mousePos.X,
+        mousePos.Y
+    )
+
+    local params = RaycastParams.new()
+    params.FilterType = Enum.RaycastFilterType.Exclude
+
+    local exclusions = {}
+
+    if player.Character then
+        table.insert(exclusions, player.Character)
+    end
+
+    local rafts = workspace:FindFirstChild("Rafts")
+
+    if rafts then
+        table.insert(exclusions, rafts)
+    end
+
+    params.FilterDescendantsInstances = exclusions
+
+    local result = workspace:Raycast(
+        ray.Origin,
+        ray.Direction * 500,
+        params
+    )
+
+    if result then
+        local obj = result.Instance
+
+        stats.targets = stats.targets + 1
+
+        addLog(
+            "Targets",
+            "RAYCAST HIT\n" ..
+            describeObject(obj) ..
+            "\nPOSITION: " .. tostring(result.Position) ..
+            "\nDISTANCE: " .. getDistance(obj)
+        )
+    else
+        addLog(
+            "Targets",
+            "RAYCAST: NO HIT"
+        )
+    end
+end
+
+--====================================
+-- OBJECT SCANNER
+--====================================
+
+local function scanObjects()
+    local root = getRoot()
+
+    if not root then
+        addLog("Events", "ROOT NOT FOUND")
+        return
+    end
+
+    local ok, parts = pcall(function()
+        return workspace:GetPartBoundsInRadius(
+            root.Position,
+            RANGE
+        )
+    end)
+
+    if not ok then
+        addLog("Events", "SPATIAL QUERY FAILED")
+        return
+    end
+
+    local current = {}
+
+    for _, part in ipairs(parts) do
+        if part:IsA("BasePart") and not isIgnored(part) then
+            local model = part:FindFirstAncestorOfClass("Model")
+            local obj = model or part
+
+            if not isIgnored(obj) then
+                current[obj] = true
+
                 if not seen[obj] then
-                    seen[obj]=true
-                    local line=string.format('NAME: %s | PART: %s | DIST: %.0f\nPATH: %s\n---',obj.Name,part.Name,(part.Position-root.Position).Magnitude,safePath(obj))
-                    local section=(candidate(obj.Name) or candidate(part.Name)) and 'Resources' or 'Others'
-                    record(section,line)
+                    seen[obj] = true
+
+                    stats.appeared = stats.appeared + 1
+
+                    local info =
+                        describeObject(obj) ..
+                        "\nPART: " .. part.Name ..
+                        "\nDISTANCE: " .. getDistance(part)
+
+                    if matchesResource(obj.Name)
+                        or matchesResource(part.Name) then
+
+                        stats.resources = stats.resources + 1
+
+                        addLog(
+                            "Resources",
+                            "POSSIBLE RESOURCE\n" .. info
+                        )
+                    else
+                        addLog(
+                            "Events",
+                            "OBJECT DISCOVERED\n" .. info
+                        )
+                    end
                 end
             end
         end
     end
-    for obj in pairs(last) do
-        if not current[obj] then record('Events','No longer in scan radius or removed: '..tostring(obj.Name)) end
+
+    for obj in pairs(nearbyPrevious) do
+        if not current[obj] then
+            stats.disappeared = stats.disappeared + 1
+
+            local removed = obj.Parent == nil
+
+            addLog(
+                "Events",
+                (removed and "REMOVED: " or "LEFT RANGE: ") ..
+                obj.Name ..
+                "\nPATH: " .. safePath(obj)
+            )
+        end
     end
-    last=current
+
+    nearbyPrevious = current
 end
--- Separate explicit classification avoids boolean-precedence mistakes.
-local function scanSafe()
-    local ok,err=pcall(scan)
-    if not ok then record('Events','SCAN ERROR: '..tostring(err)) end
+
+--====================================
+-- OBJECT CHANGE TRACKER
+--====================================
+
+local function trackAdded(obj)
+    if not running then
+        return
+    end
+
+    if not obj:IsA("BasePart") then
+        return
+    end
+
+    if isIgnored(obj) then
+        return
+    end
+
+    local root = getRoot()
+
+    if not root then
+        return
+    end
+
+    local distance = getDistance(obj)
+
+    if distance < 0 or distance > RANGE then
+        return
+    end
+
+    addLog(
+        "Events",
+        "NEW PART\n" ..
+        describeObject(obj) ..
+        "\nDISTANCE: " .. distance
+    )
 end
-local function stopScan(reason)
-    running=false;generation=generation+1
-    status.Text=reason or 'FINISHED'
-    record('Events',status.Text)
+
+local function trackRemoving(obj)
+    if not running then
+        return
+    end
+
+    if not obj:IsA("BasePart") then
+        return
+    end
+
+    if isIgnored(obj) then
+        return
+    end
+
+    addLog(
+        "Events",
+        "PART REMOVING\n" ..
+        describeObject(obj)
+    )
+end
+
+table.insert(
+    connections,
+    workspace.DescendantAdded:Connect(trackAdded)
+)
+
+table.insert(
+    connections,
+    workspace.DescendantRemoving:Connect(trackRemoving)
+)
+
+--====================================
+-- HARPOON INPUT LOGGER
+--====================================
+
+table.insert(
+    connections,
+    UIS.InputBegan:Connect(function(input, processed)
+        if not running then
+            return
+        end
+
+        if input.UserInputType ==
+            Enum.UserInputType.MouseButton1 then
+
+            stats.clicks = stats.clicks + 1
+
+            addLog(
+                "Events",
+                "LEFT CLICK #" .. stats.clicks ..
+                "\nTOOL: " .. toolName() ..
+                "\nPROCESSED: " .. tostring(processed)
+            )
+
+            inspectRay()
+            refresh()
+        end
+    end)
+)
+
+--====================================
+-- START / STOP
+--====================================
+
+local function stopScan()
+    if not running then
+        return
+    end
+
+    running = false
+    scanID = scanID + 1
+
+    status.Text = "STATUS: FINISHED"
+
+    addLog(
+        "Events",
+        "SCAN FINISHED\n" ..
+        "CLICKS: " .. stats.clicks ..
+        "\nRESOURCES: " .. stats.resources ..
+        "\nOBJECTS SEEN: " .. stats.appeared
+    )
+
     refresh()
 end
-start.MouseButton1Click:Connect(function()
-    if running then return end
-    running=true;generation=generation+1;local id=generation
-    remaining=DURATION;status.Text='SCANNING: 30s'
-    record('Events','START | tool='..toolName())
+
+local function startScan()
+    if running then
+        return
+    end
+
+    running = true
+    scanID = scanID + 1
+
+    local myID = scanID
+
+    timeLeft = DURATION
+    status.Text = "STATUS: SCANNING..."
+
+    addLog(
+        "Events",
+        "SCAN STARTED\n" ..
+        "TOOL: " .. toolName() ..
+        "\nRANGE: " .. RANGE
+    )
+
     task.spawn(function()
-        local begun=os.clock()
-        while alive and running and id==generation do
-            local elapsed=os.clock()-begun
-            remaining=math.max(0,math.ceil(DURATION-elapsed))
-            status.Text='SCANNING: '..remaining..'s'
-            scanSafe();refresh()
-            if elapsed>=DURATION then break end
+        local started = os.clock()
+
+        while running and scanID == myID do
+            local elapsed = os.clock() - started
+
+            timeLeft = math.max(
+                0,
+                math.ceil(DURATION - elapsed)
+            )
+
+            timer.Text = "TIME: " .. timeLeft .. "s"
+
+            local ok, err = pcall(scanObjects)
+
+            if not ok then
+                addLog(
+                    "Events",
+                    "SCAN ERROR: " .. tostring(err)
+                )
+            end
+
+            refresh()
+
+            if elapsed >= DURATION then
+                break
+            end
+
             task.wait(INTERVAL)
         end
-        if alive and running and id==generation then stopScan('FINISHED | COPY REPORT') end
+
+        if running and scanID == myID then
+            stopScan()
+        end
     end)
-end)
-stop.MouseButton1Click:Connect(function() if running then stopScan('STOPPED | COPY REPORT') end end)
-reset.MouseButton1Click:Connect(function()
-    running=false;generation=generation+1;seen={};last={};clicks=0
-    logs={Resources={},Events={},Others={},Test={}};remaining=DURATION
-    status.Text='READY | 30 seconds';copy.Text='COPY FULL REPORT';refresh()
-end)
-local function runTest()
-    record('Test','GUI: WORKING')
-    record('Test','PLACE ID: '..tostring(game.PlaceId))
-    record('Test','TOOL: '..toolName())
-    record('Test','ROOT: '..tostring((player.Character and player.Character:FindFirstChild('HumanoidRootPart'))~=nil))
-    record('Test','CLIPBOARD API: '..tostring(type(setclipboard)=='function'))
-    local ok,err=pcall(function() return #workspace:GetPartBoundsInRadius(Vector3.new(0,0,0),10) end)
-    record('Test','SPATIAL QUERY: '..(ok and 'OK' or tostring(err)))
-    tab='Test';refresh()
 end
-test.MouseButton1Click:Connect(runTest)
+
+start.MouseButton1Click:Connect(startScan)
+stop.MouseButton1Click:Connect(stopScan)
+
+--====================================
+-- RESET
+--====================================
+
+reset.MouseButton1Click:Connect(function()
+    running = false
+    scanID = scanID + 1
+
+    seen = {}
+    nearbyPrevious = {}
+
+    logs = {
+        Resources = {},
+        Events = {},
+        Targets = {},
+        Test = {}
+    }
+
+    stats = {
+        clicks = 0,
+        resources = 0,
+        targets = 0,
+        appeared = 0,
+        disappeared = 0
+    }
+
+    timeLeft = DURATION
+
+    status.Text = "STATUS: READY"
+    timer.Text = "TIME: 30s"
+
+    refresh()
+end)
+
+--====================================
+-- TEST PANEL
+--====================================
+
+runTest.MouseButton1Click:Connect(function()
+    addLog("Test", "GUI: WORKING")
+    addLog("Test", "PLACE ID: " .. game.PlaceId)
+    addLog("Test", "TOOL: " .. toolName())
+    addLog("Test", "ROOT: " .. tostring(getRoot() ~= nil))
+
+    addLog(
+        "Test",
+        "CLIPBOARD: " ..
+        tostring(type(setclipboard) == "function")
+    )
+
+    local ok = pcall(function()
+        local root = getRoot()
+
+        if root then
+            workspace:GetPartBoundsInRadius(
+                root.Position,
+                20
+            )
+        end
+    end)
+
+    addLog(
+        "Test",
+        "SPATIAL QUERY: " ..
+        (ok and "OK" or "FAILED")
+    )
+
+    selectTab("Test")
+end)
+
+--====================================
+-- REPORT
+--====================================
+
+local function buildReport()
+    local report = {}
+
+    table.insert(report, "RAFT INSPECTOR V5 REPORT")
+    table.insert(report, "PLACE ID: " .. game.PlaceId)
+    table.insert(report, "SCAN DURATION: " .. DURATION)
+    table.insert(report, "SCAN RANGE: " .. RANGE)
+    table.insert(report, "TOOL: " .. toolName())
+
+    table.insert(report, "\n===== SUMMARY =====")
+    table.insert(report, "CLICKS: " .. stats.clicks)
+    table.insert(report, "RESOURCES: " .. stats.resources)
+    table.insert(report, "TARGET HITS: " .. stats.targets)
+    table.insert(report, "OBJECTS SEEN: " .. stats.appeared)
+    table.insert(report, "LEFT RANGE/REMOVED: " .. stats.disappeared)
+
+    for _, category in ipairs({
+        "Resources",
+        "Events",
+        "Targets",
+        "Test"
+    }) do
+        table.insert(
+            report,
+            "\n===== " .. string.upper(category) .. " ====="
+        )
+
+        table.insert(
+            report,
+            table.concat(logs[category], "\n\n")
+        )
+    end
+
+    return table.concat(report, "\n")
+end
+
 copy.MouseButton1Click:Connect(function()
-    local data=report()
-    if type(setclipboard)=='function' then
-        local ok=pcall(setclipboard,data)
-        copy.Text=ok and 'COPIED!' or 'COPY FAILED'
-        if not ok then box.Text=data end
+    local report = buildReport()
+
+    if type(setclipboard) == "function" then
+        local ok = pcall(setclipboard, report)
+
+        copy.Text = ok
+            and "COPIED SUCCESSFULLY!"
+            or "COPY FAILED"
     else
-        box.Text=data;copy.Text='SELECT TEXT TO COPY'
+        output.Text = report
+        copy.Text = "SELECT TEXT TO COPY"
     end
 end)
-local inputConn=UIS.InputBegan:Connect(function(input,processed)
-    if not running or processed then return end
-    if input.UserInputType==Enum.UserInputType.MouseButton1 then
-        clicks=clicks+1
-        local target=player:GetMouse().Target
-        record('Events','LEFT CLICK | tool='..toolName()..' | target='..(target and safePath(target) or '<none>'))
+
+copyTab.MouseButton1Click:Connect(function()
+    local text = table.concat(
+        logs[currentTab],
+        "\n\n"
+    )
+
+    if type(setclipboard) == "function" then
+        local ok = pcall(setclipboard, text)
+
+        copyTab.Text = ok and "COPIED!" or "FAILED"
+    else
+        output.Text = text
     end
 end)
-local minimized=false
+
+--====================================
+-- MINIMIZE
+--====================================
+
+local content = {
+    status,
+    timer,
+    counter,
+    start,
+    stop,
+    reset,
+    tabResources,
+    tabEvents,
+    tabTargets,
+    tabTest,
+    runTest,
+    output,
+    copy,
+    copyTab
+}
+
 minimize.MouseButton1Click:Connect(function()
-    minimized=not minimized;frame.Size=minimized and UDim2.fromOffset(370,42) or UDim2.fromOffset(370,465)
-    for _,v in ipairs(content) do v.Visible=not minimized end
-    minimize.Text=minimized and '+' or '-'
-end)
-local dragging,dragStart,startPos=false,nil,nil
-title.Active=true
-title.InputBegan:Connect(function(input)
-    if input.UserInputType==Enum.UserInputType.MouseButton1 or input.UserInputType==Enum.UserInputType.Touch then
-        dragging=true;dragStart=input.Position;startPos=frame.Position
+    minimized = not minimized
+
+    frame.Size = minimized
+        and UDim2.fromOffset(390, 48)
+        or UDim2.fromOffset(390, 510)
+
+    for _, obj in ipairs(content) do
+        obj.Visible = not minimized
     end
+
+    minimize.Text = minimized and "+" or "-"
 end)
-local moveConn=UIS.InputChanged:Connect(function(input)
-    if dragging and (input.UserInputType==Enum.UserInputType.MouseMovement or input.UserInputType==Enum.UserInputType.Touch) then
-        local d=input.Position-dragStart
-        frame.Position=UDim2.new(startPos.X.Scale,startPos.X.Offset+d.X,startPos.Y.Scale,startPos.Y.Offset+d.Y)
+
+--====================================
+-- CLEANUP
+--====================================
+
+local function cleanup()
+    running = false
+    scanID = scanID + 1
+
+    for _, connection in ipairs(connections) do
+        pcall(function()
+            connection:Disconnect()
+        end)
     end
-end)
-local endConn=UIS.InputEnded:Connect(function(input)
-    if input.UserInputType==Enum.UserInputType.MouseButton1 or input.UserInputType==Enum.UserInputType.Touch then dragging=false end
-end)
-close.MouseButton1Click:Connect(function()
-    alive=false;running=false;generation=generation+1
-    inputConn:Disconnect();moveConn:Disconnect();endConn:Disconnect();gui:Destroy()
-end)
-record('Test','Loaded. Click RUN TEST to verify.');refresh()
-print('RAFT INSPECTOR READY')
+
+    if gui.Parent then
+        gui:Destroy()
+    end
+end
+
+if getgenv then
+    getgenv().RaftInspectorV5Cleanup = cleanup
+end
+
+close.MouseButton1Click:Connect(cleanup)
+
+--====================================
+-- READY
+--====================================
+
+addLog("Test", "RAFT INSPECTOR V5 LOADED")
+addLog("Test", "PRESS RUN TEST FIRST")
+
+print("RAFT INSPECTOR V5 READY")
