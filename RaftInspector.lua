@@ -554,6 +554,126 @@ auraCopyButton.MouseButton1Click:Connect(function()
   add('AURA',ok and 'report copied' or 'clipboard error')
  else add('AURA','setclipboard unavailable') end
 end)
+-- V14.3: HARPOON LAB -- confined to the existing TESTS page.
+-- The pre-existing collection, navigation, chest logic and visual layout remain unchanged.
+-- A single Tool:Activate request is NOT a verified shot; burst attempts are rate-limited.
+local testsScroll=Instance.new('ScrollingFrame')
+testsScroll.Name='TestsContent'
+testsScroll.Size=UDim2.fromScale(1,1)
+testsScroll.Position=UDim2.fromOffset(0,0)
+testsScroll.BackgroundTransparency=1
+testsScroll.BorderSizePixel=0
+testsScroll.ScrollBarThickness=7
+testsScroll.CanvasSize=UDim2.fromOffset(0,820)
+testsScroll.ScrollingDirection=Enum.ScrollingDirection.Y
+testsScroll.Parent=testPage
+-- Move only existing TEST page children into the scrolling panel without changing positions.
+for _,child in ipairs(testPage:GetChildren()) do
+ if child~=testsScroll and child:IsA('GuiObject') then child.Parent=testsScroll end
+end
+local labLine=Instance.new('Frame')
+labLine.Position=UDim2.fromOffset(7,380)
+labLine.Size=UDim2.fromOffset(620,2)
+labLine.BackgroundColor3=Color3.fromRGB(58,139,206)
+labLine.BorderSizePixel=0
+labLine.Parent=testsScroll
+makeLabel(testsScroll,'مختبر الحربة | HARPOON LAB',7,391,620,32,20,Color3.fromRGB(92,207,252))
+makeLabel(testsScroll,'اختبار طلبات تفعيل السلاح وقياس المقذوفات وتغيّر المخزون. لا يضمن تعدد الإصابات.',7,426,620,40,12,Color3.fromRGB(252,210,146))
+local labCountOptions={1,5,20,100}
+local labCountIndex=1
+local labCount=labCountOptions[labCountIndex]
+local labDelayOptions={0.5,0.25,0.15}
+local labDelayIndex=1
+local labDelay=labDelayOptions[labDelayIndex]
+local labRunning=false
+local labProjectileCount=0
+hook(workspace.DescendantAdded,function(obj)
+ if labRunning and obj.Name=='HarpoonProjectile' then labProjectileCount=labProjectileCount+1 end
+end)
+local labStopRequested=false
+local labTries=0
+local labLastReport='لم يبدأ اختبار الحربة بعد'
+local labBatchButton=makeBtn(testsScroll,'عدد المحاولات: 1',7,475,301,40,blue)
+local labDelayButton=makeBtn(testsScroll,'الفاصل: 0.50 ثانية',321,475,306,40,purple)
+local labStartButton=makeBtn(testsScroll,'بدء اختبار الحربة',7,525,301,43,green)
+local labStopButton=makeBtn(testsScroll,'إيقاف الاختبار',321,525,306,43,red)
+local labStatus=makeLabel(testsScroll,'الحالة: متوقف | المحاولات: 0',7,577,620,40,13,Color3.fromRGB(141,232,171))
+local labResult=makeLabel(testsScroll,'المقذوفات: 0 | تغير المخزون: خشب 0، حديد 0، خردة 0',7,617,620,52,13)
+local labCopyButton=makeBtn(testsScroll,'نسخ تقرير مختبر الحربة',7,682,620,42,blue)
+makeLabel(testsScroll,'مهم: 100 محاولة تفعيل ليست 100 طلقة معتمدة. الخادم قد يرفض معظمها.',7,733,620,55,12,Color3.fromRGB(252,210,146))
+labBatchButton.MouseButton1Click:Connect(function()
+ if labRunning then return end
+ labCountIndex=labCountIndex%#labCountOptions+1
+ labCount=labCountOptions[labCountIndex]
+ labBatchButton.Text='عدد المحاولات: '..labCount
+end)
+labDelayButton.MouseButton1Click:Connect(function()
+ if labRunning then return end
+ labDelayIndex=labDelayIndex%#labDelayOptions+1
+ labDelay=labDelayOptions[labDelayIndex]
+ labDelayButton.Text=string.format('الفاصل: %.2f ثانية',labDelay)
+end)
+labStartButton.MouseButton1Click:Connect(function()
+ if labRunning then return end
+ -- Isolate the trial: never combine with auto collection or synthetic touches.
+ if auto then stopAuto() end
+ if auraOn then auraStop() end
+ local harpoon=equipHarpoon()
+ if not harpoon then
+  labStatus.Text='الحالة: لم يتم العثور على الحربة'
+  add('HARPOON LAB','Cannot start: no harpoon tool')
+  return
+ end
+ labRunning=true
+ labStopRequested=false
+ labTries=0
+ local beforeShots=labProjectileCount
+ local beforeWood=tonumber(LP:GetAttribute('Mat_Wood')) or 0
+ local beforeMetal=tonumber(LP:GetAttribute('Mat_Metal')) or 0
+ local beforeScrap=tonumber(LP:GetAttribute('Mat_Scrap')) or 0
+ local started=os.clock()
+ add('HARPOON LAB','START requested='..labCount..' interval='..labDelay..' tool='..harpoon.Name..' no remote spoofing')
+ task.spawn(function()
+  for index=1,labCount do
+   if not alive or labStopRequested then break end
+   if not harpoon.Parent or not LP.Character or not harpoon:IsDescendantOf(LP.Character) then
+    add('HARPOON LAB','Harpoon unequipped, test stopped')
+    break
+   end
+   local ok,err=pcall(function()harpoon:Deactivate();harpoon:Activate()end)
+   labTries=labTries+1
+   if not ok then add('HARPOON LAB ERROR',tostring(err))end
+   labStatus.Text='الحالة: اختبار جار | الطلبات: '..labTries..' / '..labCount
+   task.wait(labDelay)
+  end
+  -- Give visual projectiles / replicated inventory changes a small observation window.
+  local waitEnd=os.clock()+2
+  while alive and not labStopRequested and os.clock()<waitEnd do task.wait(.15) end
+  local dShots=labProjectileCount-beforeShots
+  local dWood=(tonumber(LP:GetAttribute('Mat_Wood')) or 0)-beforeWood
+  local dMetal=(tonumber(LP:GetAttribute('Mat_Metal')) or 0)-beforeMetal
+  local dScrap=(tonumber(LP:GetAttribute('Mat_Scrap')) or 0)-beforeScrap
+  local elapsed=os.clock()-started
+  labLastReport=string.format('HARPOON LAB | player=%s | requests=%d/%d | interval=%.2fs | visibleProjectiles=%d | deltaWood=%d deltaMetal=%d deltaScrap=%d | elapsed=%.2fs | note: activation and projectile counts do not confirm server harvest',LP.Name,labTries,labCount,labDelay,dShots,dWood,dMetal,dScrap,elapsed)
+  labResult.Text='المقذوفات المرئية: '..dShots..' | خشب '..dWood..' | حديد '..dMetal..' | خردة '..dScrap
+  labStatus.Text='الحالة: '..(labStopRequested and 'متوقف مبكرا' or 'انتهى')..' | محاولات: '..labTries
+  add('HARPOON LAB',labLastReport)
+  labRunning=false
+ end)
+end)
+labStopButton.MouseButton1Click:Connect(function()
+ labStopRequested=true
+ labStatus.Text='الحالة: جار إيقاف الاختبار'
+ add('HARPOON LAB','Stop requested')
+end)
+labCopyButton.MouseButton1Click:Connect(function()
+ local txt=labLastReport..'\n=== HARPOON LAB LOGS ===\n'
+ for _,line in ipairs(logs) do if line:find('%[HARPOON LAB') then txt=txt..line..'\n' end end
+ if type(setclipboard)=='function' then
+  local ok=pcall(setclipboard,txt)
+  add('HARPOON LAB',ok and 'Report copied' or 'Clipboard failure')
+ else add('HARPOON LAB','Clipboard unavailable') end
+end)
 local function report()
  return table.concat({'RAFT CONTROL V14 FULL REPORT','PlaceId: '..game.PlaceId,'Player: '..LP.Name,'Entries retained: '..#logs,'Total events: '..total,'Projectiles: '..projectiles,'Changes: '..changes,'Candidates: '..scanCount..' | Auto active: '..tostring(auto)..' | Auto target: '..(autoTarget and autoTarget.Name or 'none'),'Filter='..resourceMode..'; range='..range..'; speed='..speed..'; instant jump='..tostring(jumpMode)..'; touch test='..tostring(touchMode)..'; touch attempts='..touchTries,'Materials: Wood='..tostring(LP:GetAttribute('Mat_Wood'))..' Metal='..tostring(LP:GetAttribute('Mat_Metal'))..' Scrap='..tostring(LP:GetAttribute('Mat_Scrap'))..' Gold='..tostring(LP:GetAttribute('Cash')),'Note: server controls actual materials; chest inspection does not confirm transfers.','===== ALL RESULTS IN TIME ORDER =====',table.concat(logs,'\n')},'\n')
 end
