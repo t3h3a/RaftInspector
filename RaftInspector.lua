@@ -293,8 +293,8 @@ local console=Instance.new('TextBox');console.Position=UDim2.fromOffset(0,132);c
 Instance.new('UICorner',console).CornerRadius=UDim.new(0,8)
 local bottom=label(main,'جاهز  |  النسخ من تبويب الفحص',17,519,435,32,12,Color3.fromRGB(135,189,228))
 local tiny=button(gui,'OPEN RAFT',14,96,114,40,Color3.fromRGB(32,117,183));tiny.Visible=false
-hide.MouseButton1Click:Connect(function()main.Visible=false;tiny.Visible=trueend)
-tiny.MouseButton1Click:Connect(function()main.Visible=true;tiny.Visible=falseend)
+hide.MouseButton1Click:Connect(function()main.Visible=false;tiny.Visible=true end)
+tiny.MouseButton1Click:Connect(function()main.Visible=true;tiny.Visible=false end)
 local function runTest()
  log('TEST','GUI=OK player='..LP.Name..' root='..tostring(root()~=nil)..' clipboard='..tostring(type(setclipboard)=='function'))
  local visual=workspace:FindFirstChild('LocalHarpoonVisuals')
